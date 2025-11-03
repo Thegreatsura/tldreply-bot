@@ -12,7 +12,7 @@ type MyConversationContext = Context & {
   encryption?: any;
 };
 
-export async function setupApiKeyConversation(conversation: Conversation<MyContext>, ctx: MyConversationContext) {
+export async function setupApiKey(conversation: Conversation<MyContext>, ctx: MyConversationContext) {
   const chat = ctx.chat;
   if (!chat || chat.type !== 'private') return;
 

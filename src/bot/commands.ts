@@ -1,4 +1,4 @@
-import { Bot, Context } from 'grammy';
+import { Bot, Context, InlineKeyboard } from 'grammy';
 import { ConversationFlavor } from '@grammyjs/conversations';
 import { Database } from '../db/database';
 import { EncryptionService } from '../utils/encryption';
@@ -31,6 +31,12 @@ export class Commands {
     this.bot.command('tldr', this.handleTLDR.bind(this));
     this.bot.command('tldr_info', this.handleTLDRInfo.bind(this));
 
+    // Button handlers
+    this.bot.callbackQuery('command_setup_group', this.handleButtonSetup.bind(this));
+    this.bot.callbackQuery('command_list_groups', this.handleButtonList.bind(this));
+    this.bot.callbackQuery('command_help', this.handleButtonHelp.bind(this));
+    this.bot.callbackQuery('command_back', this.handleButtonBack.bind(this));
+
     // Message handler for caching
     this.bot.on('message', this.handleMessageCache.bind(this));
   }
@@ -40,19 +46,21 @@ export class Commands {
     if (!chat) return;
 
     if (chat.type === 'private') {
+      const keyboard = new InlineKeyboard()
+        .text('📝 Setup Group', 'command_setup_group')
+        .text('📋 List Groups', 'command_list_groups')
+        .row()
+        .url('🔑 Get API Key', 'https://makersuite.google.com/app/apikey')
+        .text('ℹ️ Help', 'command_help');
+      
       await ctx.reply(
         `👋 Welcome to TLDR Bot!\n\n` +
         `This bot helps summarize Telegram group chats using Google's Gemini AI.\n\n` +
-        `<b>Private Chat Commands:</b>\n` +
-        `/setup_group @group or /setup_group chat_id - Configure a group\n` +
-        `/list_groups - List your configured groups\n` +
-        `/remove_group - Remove a group\n\n` +
-        `<b>Group Chat Commands:</b>\n` +
-        `/tldr [timeframe] - Get summary (e.g., /tldr 1h, /tldr 6h, /tldr day)\n` +
-        `Reply to a message with /tldr - Summarize from that message\n` +
-        `/tldr_info - Show group configuration\n\n` +
-        `<i>Note: Each group needs its own Gemini API key.\nFor private groups, get the chat ID using @userinfobot.</i>`,
-        { parse_mode: 'HTML' }
+        `<i>Use the buttons below or type commands to get started!</i>`,
+        { 
+          parse_mode: 'HTML',
+          reply_markup: keyboard
+        }
       );
     }
   }
@@ -121,6 +129,58 @@ export class Commands {
 
   private async handleApiKeyInput(ctx: MyContext) {
     // This will be handled by the conversation handler
+  }
+
+  private async handleButtonSetup(ctx: MyContext) {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '📝 <b>Setup a Group</b>\n\n' +
+      '<b>For public groups:</b>\n' +
+      '<code>/setup_group @your_group_username</code>\n\n' +
+      '<b>For private groups:</b>\n' +
+      '1. Add @userinfobot to your group\n' +
+      '2. Forward a message to get chat ID\n' +
+      '3. Use: <code>/setup_group chat_id</code>\n\n' +
+      '<i>Example: /setup_group -123456789</i>',
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  private async handleButtonList(ctx: MyContext) {
+    await ctx.answerCallbackQuery();
+    await this.handleListGroups(ctx);
+  }
+
+  private async handleButtonHelp(ctx: MyContext) {
+    await ctx.answerCallbackQuery();
+    const keyboard = new InlineKeyboard()
+      .url('📚 Full Documentation', 'https://makersuite.google.com/app/apikey')
+      .row()
+      .text('⬅️ Back', 'command_back');
+    
+    await ctx.reply(
+      'ℹ️ <b>TLDR Bot Help</b>\n\n' +
+      '<b>Private Chat Commands:</b>\n' +
+      '• /setup_group - Configure a group\n' +
+      '• /list_groups - List your groups\n' +
+      '• /remove_group - Remove a group\n\n' +
+      '<b>Group Chat Commands:</b>\n' +
+      '• /tldr 1h - Summary of last hour\n' +
+      '• /tldr 6h - Summary of last 6 hours\n' +
+      '• /tldr day - Summary of last day\n' +
+      '• Reply with /tldr - From that message\n' +
+      '• /tldr_info - Group configuration\n\n' +
+      '<i>Note: Each group needs a Gemini API key.</i>',
+      { 
+        parse_mode: 'HTML',
+        reply_markup: keyboard
+      }
+    );
+  }
+
+  private async handleButtonBack(ctx: MyContext) {
+    await ctx.answerCallbackQuery();
+    await this.handleStart(ctx);
   }
 
   private async handleListGroups(ctx: MyContext) {

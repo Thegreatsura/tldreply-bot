@@ -3,7 +3,7 @@ import { conversations, createConversation, ConversationFlavor } from '@grammyjs
 import { Database } from '../db/database';
 import { EncryptionService } from '../utils/encryption';
 import { Commands } from './commands';
-import { setupApiKeyConversation } from './conversations';
+import { setupApiKey } from './conversations';
 
 type MyContext = ConversationFlavor<Context>;
 
@@ -22,7 +22,7 @@ export class TLDRBot {
     this.bot.use(conversations());
     
     // Register conversation
-    this.bot.use(createConversation(setupApiKeyConversation));
+    this.bot.use(createConversation(setupApiKey));
 
     // Initialize commands (pass db and encryption to conversation context)
     this.bot.use(async (ctx, next) => {
