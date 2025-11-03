@@ -42,7 +42,8 @@ export class GeminiService {
     Summary:`;
 
     try {
-      const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      // Try gemini-1.0-pro first (most stable)
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-1.0-pro' });
       const result = await model.generateContent(prompt);
       const response = await result.response;
       return response.text();
