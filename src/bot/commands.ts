@@ -520,12 +520,14 @@ export class Commands {
       '<b>/tldr [timeframe or count]</b>\n' +
       '<i>Get summary for a time period or message count</i>\n' +
       '<i>Examples:</i>\n' +
-      '<code>/tldr</code> - Last hour\n' +
+      '<code>/tldr</code> or <code>/tldr 1h</code> - Last hour\n' +
       '<code>/tldr 6h</code> - Last 6 hours\n' +
-      '<code>/tldr 300</code> - Last 300 messages\n' +
       '<code>/tldr 30h</code> - Last 30 hours\n' +
-      '<code>/tldr day</code> - Last day\n' +
-      '<code>/tldr week</code> - Last week\n\n' +
+      '<code>/tldr day</code> or <code>/tldr 1 day</code> or <code>/tldr 1d</code> - Last day\n' +
+      '<code>/tldr 2d</code> or <code>/tldr 2 days</code> - Last 2 days\n' +
+      '<code>/tldr 3d</code> or <code>/tldr 3 days</code> - Last 3 days\n' +
+      '<code>/tldr week</code> or <code>/tldr 1 week</code> - Last week\n' +
+      '<code>/tldr 300</code> - Last 300 messages\n\n' +
       '<b>Reply to message + /tldr</b>\n' +
       '<i>Summarize from that message to now</i>\n\n' +
       '<b>/tldr_info</b>\n' +
@@ -1016,22 +1018,8 @@ export class Commands {
 
       // Handle time-based or count-based summary
       const args = ctx.message?.text?.split(' ') || [];
-      const input = args[1] || '1h';
-      
-      // Validate input - warn if multiple words provided
-      if (args.length > 2) {
-        // User typed something like "/tldr very big hour" - warn but continue with default
-        await ctx.reply(
-          '⚠️ Invalid format. Using default (1 hour).\n\n' +
-          '<b>Valid formats:</b>\n' +
-          '<code>/tldr</code> or <code>/tldr 1h</code> - Last hour\n' +
-          '<code>/tldr 6h</code> - Last 6 hours\n' +
-          '<code>/tldr 300</code> - Last 300 messages\n' +
-          '<code>/tldr day</code> - Last day\n' +
-          '<code>/tldr week</code> - Last week',
-          { parse_mode: 'HTML' }
-        );
-      }
+      // Join all arguments after the command to support formats like "1 day", "2 days", "1 hour"
+      const input = args.slice(1).join(' ').trim() || '1h';
       
       loadingMsg = await ctx.reply('⏳ Generating summary...');
 
@@ -1863,9 +1851,6 @@ export class Commands {
     // Match *text* that's not part of ** (already converted) and not at line start
     html = html.replace(/(?<!\*)\*([^*\n<]+?)\*(?!\*)/g, '<i>$1</i>');
     
-    // Convert _underline_ to <u>underline</u>
-    html = html.replace(/_([^_]+?)_/g, '<u>$1</u>');
-    
     // Convert ~~strikethrough~~ to <s>strikethrough</s>
     html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
     
@@ -1928,9 +1913,32 @@ export class Commands {
     const MAX_HOURS = 168; // 7 days maximum
     let hours = 1;
 
-    // Normalize input
-    const normalized = timeframe.toLowerCase().trim();
+    // Normalize input - remove extra spaces and convert to lowercase
+    const normalized = timeframe.toLowerCase().trim().replace(/\s+/g, ' ');
 
+    // Handle formats like "1 day", "2 days", "1 hour", "2 hours"
+    const dayMatch = normalized.match(/^(\d+)\s+(day|days)$/);
+    if (dayMatch) {
+      const days = Math.min(parseInt(dayMatch[1], 10), 7); // Cap at 7 days
+      hours = days * 24;
+      return new Date(now - hours * 60 * 60 * 1000);
+    }
+
+    const hourMatch = normalized.match(/^(\d+)\s+(hour|hours|h)$/);
+    if (hourMatch) {
+      const value = parseInt(hourMatch[1], 10);
+      hours = Math.min(value, MAX_HOURS); // Cap at 7 days
+      return new Date(now - hours * 60 * 60 * 1000);
+    }
+
+    const weekMatch = normalized.match(/^(\d+)\s+(week|weeks)$/);
+    if (weekMatch) {
+      const weeks = Math.min(parseInt(weekMatch[1], 10), 1); // Cap at 1 week (7 days)
+      hours = weeks * 168;
+      return new Date(now - hours * 60 * 60 * 1000);
+    }
+
+    // Handle compact formats (no spaces)
     if (normalized.endsWith('h')) {
       const value = parseInt(normalized.slice(0, -1), 10);
       if (isNaN(value) || value <= 0) {

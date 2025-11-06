@@ -290,9 +290,6 @@ export class TLDRBot {
     // Match *text* that's not part of ** (already converted) and not at line start
     html = html.replace(/(?<!\*)\*([^*\n<]+?)\*(?!\*)/g, '<i>$1</i>');
     
-    // Convert _underline_ to <u>underline</u>
-    html = html.replace(/_([^_]+?)_/g, '<u>$1</u>');
-    
     // Convert ~~strikethrough~~ to <s>strikethrough</s>
     html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
     

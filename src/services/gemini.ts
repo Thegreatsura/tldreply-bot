@@ -107,7 +107,13 @@ You have received ${chunks.length} partial summaries covering ${totalMessages} t
 - Highlights the most important topics, decisions, and announcements
 - Preserves the key points from each partial summary
 
-CRITICAL: When referring to users in the summary, ALWAYS use their actual username or name (as mentioned in the partial summaries) instead of generic terms like "A user", "Another user", "Someone", etc. Use the exact username or name from the conversation.
+CRITICAL: When referring to users in the summary, ALWAYS use their actual username or name exactly as shown in the partial summaries:
+    - If a user has a username (shown as @username), use "@username" in the summary exactly as shown - including any underscores that are part of the username (e.g., @user_name)
+    - If a user only has a first name (shown without @), use just the first name exactly as shown - including any underscores if present
+    - Never use generic terms like "A user", "Another user", "Someone", etc.
+    - Do NOT wrap usernames/names in brackets [], or add formatting around them
+    - Write usernames/names exactly as they appear: @username (with underscores if part of the username) or FirstName
+    - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but keep underscores that are part of actual usernames/names
 
 Partial Summaries:
 ${mergedSummaries}
@@ -149,9 +155,10 @@ Unified Summary:`;
 
     // Format messages for context
     const formattedMessages = messages.map((msg, idx) => {
-      const user = msg.username || msg.firstName || 'Unknown';
+      // Use @username if available, otherwise use firstName without @
+      const user = msg.username ? `@${msg.username}` : (msg.firstName || 'Unknown');
       const content = msg.content;
-      return `${idx + 1}. [${user}]: ${content}`;
+      return `${idx + 1}. ${user}: ${content}`;
     }).join('\n\n');
 
     // Build base prompt
@@ -171,12 +178,20 @@ Unified Summary:`;
     - Ongoing questions or unresolved issues
     - Skip greetings, emojis-only messages, and spam
     
-    CRITICAL: When referring to users in the summary, ALWAYS use their actual username or name (as shown in square brackets like [username]) instead of generic terms like "A user", "Another user", "Someone", etc. Use the exact username or name from the conversation.
+    CRITICAL: When referring to users in the summary, ALWAYS use their actual username or name exactly as shown in the conversation:
+    - If a user has a username (shown as @username), use "@username" in the summary exactly as shown - including any underscores that are part of the username (e.g., @user_name)
+    - If a user only has a first name (shown without @), use just the first name exactly as shown - including any underscores if present
+    - Never use generic terms like "A user", "Another user", "Someone", etc.
+    - Do NOT wrap usernames/names in brackets [], or add formatting around them
+    - Write usernames/names exactly as they appear: @username (with underscores if part of the username) or FirstName
+    - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but keep underscores that are part of actual usernames/names
     
     IMPORTANT: Format your response using markdown:
     - Use **bold** for important topics or section headers
     - Use bullet points (* item) for lists
     - Keep the summary clear and organized
+    - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but preserve underscores that are part of usernames/names (e.g., @user_name is correct)
+    - DO NOT use any underline formatting in the summary
     
     Conversation:
     ${formattedMessages}
