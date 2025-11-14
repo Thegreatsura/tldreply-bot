@@ -1093,11 +1093,13 @@ export class Commands {
       // Convert markdown to HTML
       const formattedSummary = this.markdownToHtml(summary);
       
-      await ctx.api.editMessageText(
+      // Send summary, splitting into multiple messages if too long
+      await this.sendSummaryMessage(
+        ctx,
         chat.id,
         loadingMsg.message_id,
-        `📝 <b>TLDR Summary</b> (${summaryLabel})\n\n${formattedSummary}`,
-        { parse_mode: 'HTML' }
+        `📝 <b>TLDR Summary</b> (${summaryLabel})`,
+        formattedSummary
       );
     } catch (error: any) {
       console.error('Error generating TLDR:', error);
@@ -1198,11 +1200,13 @@ export class Commands {
       // Convert markdown to HTML
       const formattedSummary = this.markdownToHtml(summary);
 
-      await ctx.api.editMessageText(
+      // Send summary, splitting into multiple messages if too long
+      await this.sendSummaryMessage(
+        ctx,
         chat.id,
         loadingMsg.message_id,
-        `📝 <b>TLDR Summary</b> (from message)\n\n${formattedSummary}`,
-        { parse_mode: 'HTML' }
+        `📝 <b>TLDR Summary</b> (from message)`,
+        formattedSummary
       );
     } catch (error: any) {
       console.error('Error generating TLDR from message:', error);
@@ -1915,6 +1919,127 @@ export class Commands {
     html = html.replace(/\n{3,}/g, '\n\n');
     
     return html;
+  }
+
+  /**
+   * Send summary message, splitting into multiple parts if too long
+   * Telegram has a 4096 character limit per message
+   */
+  private async sendSummaryMessage(
+    ctx: MyContext,
+    chatId: number,
+    loadingMsgId: number,
+    header: string,
+    summary: string
+  ): Promise<void> {
+    const MAX_MESSAGE_LENGTH = 4096;
+    const headerLength = header.length + 2; // +2 for \n\n
+    
+    // Calculate available length for summary (leave some buffer for safety)
+    const maxSummaryLength = MAX_MESSAGE_LENGTH - headerLength - 100; // 100 char buffer
+    
+    // If summary fits in one message, send it normally
+    if (summary.length <= maxSummaryLength) {
+      try {
+        await ctx.api.editMessageText(
+          chatId,
+          loadingMsgId,
+          `${header}\n\n${summary}`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      } catch (error: any) {
+        // If edit fails due to message length, fall through to splitting logic
+        if (!error.message?.includes('MESSAGE_TOO_LONG')) {
+          throw error;
+        }
+      }
+    }
+    
+    // Split summary into chunks
+    const chunks = this.splitMessage(summary, maxSummaryLength);
+    
+    // Edit loading message with first chunk
+    try {
+      await ctx.api.editMessageText(
+        chatId,
+        loadingMsgId,
+        `${header} (1/${chunks.length})\n\n${chunks[0]}`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error: any) {
+      // If even the header + first chunk is too long, send just the first chunk and continue
+      if (error.message?.includes('MESSAGE_TOO_LONG')) {
+        await ctx.api.editMessageText(
+          chatId,
+          loadingMsgId,
+          chunks[0],
+          { parse_mode: 'HTML' }
+        );
+      } else {
+        throw error;
+      }
+    }
+    
+    // Send remaining chunks as new messages
+    for (let i = 1; i < chunks.length; i++) {
+      await ctx.reply(
+        `${header} (${i + 1}/${chunks.length})\n\n${chunks[i]}`,
+        { parse_mode: 'HTML' }
+      );
+    }
+  }
+
+  /**
+   * Split a long message into chunks that fit within Telegram's message length limit
+   * Tries to split at paragraph boundaries (double newlines) when possible
+   */
+  private splitMessage(text: string, maxLength: number): string[] {
+    if (text.length <= maxLength) {
+      return [text];
+    }
+    
+    const chunks: string[] = [];
+    let remaining = text;
+    
+    while (remaining.length > 0) {
+      if (remaining.length <= maxLength) {
+        chunks.push(remaining);
+        break;
+      }
+      
+      // Try to find a good split point (preferably at paragraph break)
+      let splitPoint = maxLength;
+      
+      // Look for paragraph break (double newline) near the max length
+      const paragraphBreak = remaining.lastIndexOf('\n\n', maxLength);
+      if (paragraphBreak > maxLength * 0.7) {
+        // Use paragraph break if it's not too early
+        splitPoint = paragraphBreak + 2; // +2 to include \n\n
+      } else {
+        // Look for single newline
+        const lineBreak = remaining.lastIndexOf('\n', maxLength);
+        if (lineBreak > maxLength * 0.8) {
+          splitPoint = lineBreak + 1; // +1 to include \n
+        } else {
+          // Look for sentence end
+          const sentenceEnd = remaining.lastIndexOf('. ', maxLength);
+          if (sentenceEnd > maxLength * 0.7) {
+            splitPoint = sentenceEnd + 2; // +2 to include '. '
+          } else {
+            // Force split at max length
+            splitPoint = maxLength;
+          }
+        }
+      }
+      
+      // Extract chunk and add continuation indicator if not the last chunk
+      const chunk = remaining.substring(0, splitPoint);
+      chunks.push(chunk);
+      remaining = remaining.substring(splitPoint).trim();
+    }
+    
+    return chunks;
   }
 
   /**
