@@ -499,9 +499,11 @@ export class Commands {
       '<i>Complete a pending group setup with API key</i>\n\n' +
       '<b>/list_groups</b>\n' +
       '<i>List all your configured groups</i>\n\n' +
-      '<b>/update_api_key &lt;chat_id&gt;</b>\n' +
+      '<b>/update_api_key &lt;chat_id&gt; [api_key]</b>\n' +
       '<i>Update API key for a group</i>\n' +
-      '<i>Example: /update_api_key -123456789</i>\n\n' +
+      '<i>Examples:</i>\n' +
+      '<code>/update_api_key -123456789</code> - Interactive mode\n' +
+      '<code>/update_api_key -123456789 AIza...</code> - Direct update\n\n' +
       '<b>/remove_group &lt;chat_id&gt;</b>\n' +
       '<i>Remove a group configuration</i>\n' +
       '<i>Example: /remove_group -123456789</i>\n\n' +
@@ -645,8 +647,10 @@ export class Commands {
         if (isNaN(chatId)) {
           await ctx.reply(
             '❌ Invalid group ID format.\n\n' +
-            'Usage: `/update_api_key <chat_id>`\n\n' +
-            'Example: `/update_api_key -123456789`\n\n' +
+            'Usage: `/update_api_key <chat_id> [api_key]`\n\n' +
+            'Examples:\n' +
+            '• `/update_api_key -123456789` - Interactive mode\n' +
+            '• `/update_api_key -123456789 AIza...` - Direct update\n\n' +
             'Run `/list_groups` to see your groups and their IDs.',
             { parse_mode: 'HTML' }
           );
@@ -656,11 +660,21 @@ export class Commands {
         // Verify the group belongs to this user and is configured
         const group = configuredGroups.find(g => g.telegram_chat_id === chatId);
         if (!group) {
-          await ctx.reply(
-            '❌ Group not found or not configured.\n\n' +
-            'Run `/list_groups` to see your configured groups.',
-            { parse_mode: 'HTML' }
-          );
+          // Check if group exists but doesn't have API key
+          const groupExists = allGroups.find(g => g.telegram_chat_id === chatId);
+          if (groupExists) {
+            await ctx.reply(
+              '❌ Group found but not configured with an API key.\n\n' +
+              'Please complete the setup first using /setup_group or /setup.',
+              { parse_mode: 'HTML' }
+            );
+          } else {
+            await ctx.reply(
+              '❌ Group not found.\n\n' +
+              'Run `/list_groups` to see your configured groups.',
+              { parse_mode: 'HTML' }
+            );
+          }
           return;
         }
 
@@ -685,8 +699,45 @@ export class Commands {
           return;
         }
 
-        // Store the group ID for the conversation
+        // Check if API key was provided as second argument
+        if (args.length >= 3) {
+          // Direct update mode - API key provided as argument
+          const apiKey = args.slice(2).join(' ').trim();
+          
+          // Import the validation function (we'll need to export it or move it)
+          // For now, let's do the validation inline
+          if (!GeminiService.validateApiKey(apiKey)) {
+            await ctx.reply('❌ Invalid API key format. Please check your key and try again.');
+            return;
+          }
+
+          // Test and update the API key
+          try {
+            const gemini = new GeminiService(apiKey);
+            await gemini.summarizeMessages([{ content: 'test', timestamp: new Date().toISOString() }]);
+            
+            const encryptedKey = this.encryption.encrypt(apiKey);
+            await this.db.updateGroupApiKey(chatId, encryptedKey);
+            
+            await ctx.reply('✅ API key updated successfully! The bot will now use the new key for summaries.');
+          } catch (error: any) {
+            const errorMessage = error.message || 'Unknown error';
+            if (errorMessage.includes('Invalid API key') || errorMessage.includes('API_KEY_INVALID') || errorMessage.includes('401')) {
+              await ctx.reply('❌ Invalid API key. Please check your key and try again.\n\n💡 Get a new key from: https://makersuite.google.com/app/apikey');
+            } else if (errorMessage.includes('quota') || errorMessage.includes('QUOTA_EXCEEDED') || errorMessage.includes('429')) {
+              await ctx.reply('❌ API quota exceeded. Please try again later or check your API usage.');
+            } else {
+              await ctx.reply(`❌ Failed to validate API key: ${errorMessage}. Please check your key and try again.`);
+            }
+          }
+          return;
+        }
+
+        // Interactive mode - no API key provided, enter conversation
         setUpdateState(chat.id, chatId);
+        
+        // Send prompt message before entering conversation
+        await ctx.reply('Please paste your new Gemini API key:');
         
         // Enter update conversation
         await ctx.conversation.enter('updateApiKey', { overwrite: true });
@@ -1378,13 +1429,38 @@ export class Commands {
     }
 
     try {
-      // Verify the group belongs to this user and is configured
-      const groups = await this.db.listGroupsForUser(chat.id);
-      const group = groups.find(g => g.telegram_chat_id === chatId && g.gemini_api_key_encrypted);
-      
-      if (!group) {
+      const userId = ctx.from?.id;
+      if (!userId) {
+        await ctx.editMessageText('❌ Could not identify user.');
+        return;
+      }
+
+      // First, verify the group exists in the database
+      const groupFromDb = await this.db.getGroup(chatId);
+      if (!groupFromDb) {
         await ctx.editMessageText(
-          '❌ Group not found or not configured.'
+          '❌ Group not found in database.\n\n' +
+          'The group may not be set up yet. Run /setup in the group or /setup_group in private chat.'
+        );
+        return;
+      }
+
+      // Verify the group belongs to this user
+      // Compare as numbers to avoid type mismatch issues
+      const setupUserId = groupFromDb.setup_by_user_id ? Number(groupFromDb.setup_by_user_id) : null;
+      if (setupUserId !== userId) {
+        await ctx.editMessageText(
+          '❌ You are not authorized to update this group.\n\n' +
+          'Only the user who set up the group can update its API key.'
+        );
+        return;
+      }
+
+      // Verify the group has an API key configured
+      if (!groupFromDb.gemini_api_key_encrypted || groupFromDb.gemini_api_key_encrypted.trim().length === 0) {
+        await ctx.editMessageText(
+          '❌ Group found but not configured with an API key.\n\n' +
+          'Please complete the setup first using /setup_group or /setup.'
         );
         return;
       }
