@@ -1,0 +1,104 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy-package
+          cp -r dist deploy-package/
+          cp package.json deploy-package/
+          cp package-lock.json deploy-package/
+          # Copy any other necessary files (like env.example if needed)
+          if [ -f "env.example" ]; then
+            cp env.example deploy-package/
+          fi
+
+      - name: Deploy to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: 22
+          source: "deploy-package/*"
+          target: "/tmp/tldreply-deploy"
+          strip_components: 0
+
+      - name: SSH and deploy on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: 22
+          script: |
+            # Create project directory if it doesn't exist
+            sudo mkdir -p /var/www/tldreply
+            
+            # Backup current deployment (optional)
+            if [ -d "/var/www/tldreply/dist" ]; then
+              sudo cp -r /var/www/tldreply/dist /var/www/tldreply/dist.backup.$(date +%Y%m%d_%H%M%S) || true
+            fi
+            
+            # Preserve .env file if it exists
+            if [ -f "/var/www/tldreply/.env" ]; then
+              sudo cp /var/www/tldreply/.env /tmp/tldreply-env-backup || true
+            fi
+            
+            # Copy new files to project directory
+            sudo cp -r /tmp/tldreply-deploy/* /var/www/tldreply/
+            
+            # Restore .env file if it was backed up
+            if [ -f "/tmp/tldreply-env-backup" ]; then
+              sudo mv /tmp/tldreply-env-backup /var/www/tldreply/.env
+            fi
+            
+            sudo chown -R $USER:$USER /var/www/tldreply
+            
+            # Navigate to project directory
+            cd /var/www/tldreply
+            
+            # Install/update dependencies
+            npm ci --production
+            
+            # Restart PM2 process (or start if it doesn't exist)
+            if pm2 list | grep -q "tldreply-bot"; then
+              pm2 restart tldreply-bot
+            else
+              pm2 start dist/index.js --name tldreply-bot --cwd /var/www/tldreply
+            fi
+            
+            # Save PM2 process list
+            pm2 save
+            
+            # Cleanup temporary files
+            rm -rf /tmp/tldreply-deploy
+
+      - name: Deployment status
+        run: |
+          echo "✅ Deployment completed successfully!"
+

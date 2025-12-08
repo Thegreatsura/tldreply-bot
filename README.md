@@ -182,9 +182,63 @@ The bot only stores messages it receives after being added to a group. It cannot
 6. Bot will auto-deploy!
 
 **Free hosting stack:**
-- Railway.app ($5 free credit/month)
 - Supabase (free PostgreSQL tier)
 - Google Gemini (free AI tier)
+
+## Deploy to VPS with GitHub Actions
+
+This project includes a GitHub Actions workflow for automated deployment to a VPS server.
+
+### Prerequisites
+
+- A VPS server with SSH access
+- Node.js and PM2 installed on the VPS
+- The project directory `/var/www/tldreply` (will be created automatically)
+
+### Setup
+
+1. **Configure GitHub Secrets:**
+   Go to your repository → Settings → Secrets and variables → Actions → New repository secret
+   
+   Add the following secrets:
+   - `VPS_HOST`: Your VPS IP address (e.g., `111.xxx.x.x`)
+   - `VPS_USERNAME`: Your VPS username (e.g., `username`)
+   - `VPS_PASSWORD`: Your VPS password
+
+2. **Initial VPS Setup:**
+   SSH into your VPS and run:
+   ```bash
+   # Install Node.js (if not already installed)
+   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+   sudo apt-get install -y nodejs
+   
+   # Install PM2 globally
+   sudo npm install -g pm2
+   
+   # Create project directory (if needed)
+   sudo mkdir -p /var/www/tldreply
+   sudo chown -R $USER:$USER /var/www/tldreply
+   ```
+
+3. **Configure Environment Variables:**
+   On your VPS, create a `.env` file in `/var/www/tldreply`:
+   ```bash
+   cd /var/www/tldreply
+   cp env.example .env
+   nano .env  # Edit with your actual values
+   ```
+
+4. **Deploy:**
+   - Push to the `main` branch to trigger automatic deployment
+   - Or manually trigger via GitHub Actions → Deploy to VPS → Run workflow
+
+The workflow will:
+- Build the TypeScript project
+- Deploy to `/var/www/tldreply` on your VPS
+- Install production dependencies
+- Restart the PM2 process automatically
+
+**Note:** Make sure your VPS user has sudo access and password authentication is enabled for SSH (or configure SSH keys for better security).
 
 ## Architecture
 
