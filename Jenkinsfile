@@ -7,7 +7,7 @@ pipeline {
   }
   
   environment {
-    PROJECT_DIR = '/var/www/tldreply'
+    PROJECT_DIR = '/var/www/tldreply-bot'
   }
   
   stages {
