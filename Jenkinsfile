@@ -4,7 +4,7 @@ pipeline {
 
     environment {
        
-        PATH = "${tool 'node'}/bin:${env.PATH}:./node_modules/.bin"
+       PATH = "${env.PATH}:./node_modules/.bin"
         
         NODE_ENV = "production"
         PM2_APP_NAME = "trlreply-bot" // Use the name from your environment variables
@@ -80,10 +80,8 @@ pipeline {
 
     post {
         always {
-            script {
-                echo '🧹 Cleaning up workspace...'
-                cleanWs() 
-            }
+            echo '🧹 Cleaning up workspace...' 
+            cleanWs() 
         }
         success {
             echo '🎉 SUCCESS! Pipeline completed successfully!'
