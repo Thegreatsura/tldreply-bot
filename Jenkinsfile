@@ -13,9 +13,13 @@ pipeline {
     stages {
         
         stage('📦 Install Dependencies') {
+            
             steps {
-                echo '⬇️ Checking out source code and installing dependencies...'
-                sh 'npm ci' 
+                // Wrap steps in a 'node' block to execute them using the configured Node.js tool
+                node('node20') { 
+                    echo '⬇️ Installing dependencies...'
+                    sh 'npm ci' 
+                }
             }
         }
 
@@ -24,15 +28,19 @@ pipeline {
                 
                 stage('Lint Check') {
                     steps {
+                        node('node20') { 
                         echo '🧹 Running ESLint for code quality...'
-                        sh 'npm run lint' 
+                            sh 'npm run lint' 
+                        }
                     }
                 }
                 
                 stage('Format Check') {
                     steps {
+                        node('node20') { 
                         echo '✨ Running Prettier for code formatting...'
-                        sh 'npm run format:check' 
+                            sh 'npm run format:check' 
+                        }
                     }
                 }
             }
@@ -40,8 +48,10 @@ pipeline {
 
         stage('🔨 Build Application') {
             steps {
+                node('node20') { 
                 echo '🛠️ Compiling TypeScript to JavaScript...'
                 sh 'npm run build' 
+                }
             }
         }
 
