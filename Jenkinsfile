@@ -29,15 +29,15 @@ pipeline {
                 stage('Lint Check') { 
                     steps { 
                         echo '🧹 Running ESLint...'; 
-                        // CRITICAL FIX: Use npx to find the local executable
-                        sh 'npx npm run lint' 
+                        // CRITICAL FIX: Run via npm run to use local binaries
+                        sh 'npm run lint' 
                     }
                 }
                 stage('Format Check') { 
                     steps { 
                         echo '✨ Running Prettier...'; 
-                        // CRITICAL FIX: Use npx to find the local executable
-                        sh 'npx npm run format:check' 
+                        // CRITICAL FIX: Run via npm run to use local binaries
+                        sh 'npm run format:check' 
                     } 
                 }
             }
@@ -47,8 +47,8 @@ pipeline {
         stage('🔨 Build Application') {
             steps {
                 echo '🛠️ Compiling TypeScript...'
-                // CRITICAL FIX: Use npx to find the local executable
-                sh 'npx npm run build'
+                // CRITICAL FIX: Run via npm run to use local binaries
+                sh 'npm run build'
             }
         }
 
