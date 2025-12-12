@@ -11,7 +11,6 @@ pipeline {
 
     environment {
         // FIX: REMOVED the problematic PATH update.
-        NODE_ENV = "production"
         PM2_APP_NAME = "trlreply-bot"
     }
 
@@ -61,7 +60,7 @@ pipeline {
                     pm2 describe $PM2_APP_NAME > /dev/null 2>&1
                     if [ $? -eq 0 ]; then pm2 delete $PM2_APP_NAME; fi
                 '''
-                sh "pm2 start dist/index.js --name $PM2_APP_NAME"
+                sh "NODE_ENV=production pm2 start dist/index.js --name $PM2_APP_NAME"
                 sh 'pm2 save'
             }
         }
