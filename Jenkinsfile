@@ -71,6 +71,7 @@ pipeline {
                 // Ensure production env for runtime and pass secrets
                 sh "NODE_ENV=production TELEGRAM_TOKEN=$TELEGRAM_TOKEN DATABASE_URL=$DATABASE_URL ENCRYPTION_SECRET=$ENCRYPTION_SECRET pm2 start dist/index.js --name $PM2_APP_NAME"
                 sh 'pm2 save'
+                sh 'pm2 list'
             }
         }
     }
