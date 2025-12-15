@@ -1,86 +1,91 @@
+/**
+ * FINAL Declarative Pipeline - Uses 'tools' for Node version and 'npx' for reliable local execution.
+ */
 pipeline {
-    agent any
+    agent any 
+
+    tools {
+        // Keeps Node.js 20 installed and available (Fixes Node version warnings)
+        nodejs 'node22' 
+    }
 
     environment {
-        NODE_ENV = "production"
+        // FIX: REMOVED the problematic PATH update.
         PM2_APP_NAME = "trlreply-bot"
+        // Load secrets from Jenkins credentials
+        TELEGRAM_TOKEN = credentials('telegram-token')
+        DATABASE_URL = credentials('database-url')
+        ENCRYPTION_SECRET = credentials('encryption-secret')
     }
 
     stages {
-        stage('Checkout') {
+        stage('📦 Install Dependencies') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/your-username/your-repo.git',
-                        credentialsId: 'github'   // Your PAT stored as secret text
-                    ]]
-                ])
+                echo '⬇️ Installing dependencies...'
+                sh 'npm ci' 
             }
         }
 
-        stage('Install, Lint & Format (Parallel)') {
+        // Stage 2: Code Quality Checks (FIXED with npx)
+        stage('🧪 Lint, Format, & Test (Parallel)') {
             parallel {
-                stage('Install Dependencies') {
-                    steps {
-                        sh 'npm ci'        // faster and reproducible
+                stage('Lint Check') { 
+                    steps { 
+                        echo '🧹 Running ESLint...'; 
+                        // CRITICAL FIX: Run via npm run to use local binaries
+                        sh 'npm run lint' 
                     }
                 }
-                stage('Lint') {
-                    steps {
-                        sh 'npm run lint --if-present'
-                    }
-                }
-                stage('Prettier Format') {
-                    steps {
-                        sh 'npm run format --if-present'
-                    }
+                stage('Format Check') { 
+                    steps { 
+                        echo '✨ Running Prettier...'; 
+                        // CRITICAL FIX: Run via npm run to use local binaries
+                        sh 'npm run format:check' 
+                    } 
                 }
             }
         }
 
-        stage('Build') {
+        // Stage 3: Build Application (FIXED with npx)
+        stage('🔨 Build Application') {
             steps {
-                sh 'npm run build --if-present'
+                echo '🛠️ Compiling TypeScript...'
+                // CRITICAL FIX: Run via npm run to use local binaries
+                sh 'npm run build'
             }
         }
 
-        stage('Deploy with PM2') {
+        // Stage 4: Deploy Application (PM2 is typically globally installed, so no npx needed)
+        stage('🚀 Deploy with PM2') {
             steps {
-                // Stop old app if exists
+                echo "☁️ Deploying application: ${env.PM2_APP_NAME}"
+                
                 sh '''
-                    pm2 describe $PM2_APP_NAME > /dev/null 2>&1
-                    if [ $? -eq 0 ]; then
-                      pm2 delete $PM2_APP_NAME
+                    if pm2 describe $PM2_APP_NAME > /dev/null 2>&1; then
+                        echo "App $PM2_APP_NAME is running. Deleting..."
+                        pm2 delete $PM2_APP_NAME
+                    else
+                        echo "App $PM2_APP_NAME is not running."
                     fi
                 '''
-
-                // Start fresh build
-                sh '''
-                    pm2 start dist/index.js --name $PM2_APP_NAME
-                    pm2 save
-                '''
+                // Ensure production env for runtime and pass secrets
+                sh "NODE_ENV=production TELEGRAM_TOKEN=$TELEGRAM_TOKEN DATABASE_URL=$DATABASE_URL ENCRYPTION_SECRET=$ENCRYPTION_SECRET pm2 start dist/index.js --name $PM2_APP_NAME"
+                sh 'pm2 save'
+                sh 'pm2 list'
             }
         }
     }
+
     post {
         always {
-            script {
-                echo '🧹 Cleaning up workspace...'
-                cleanWs()
-            }
-            // Add notification steps here (Email, Slack, etc.) later
+            echo '🧹 Cleaning up workspace...'
+            cleanWs() 
         }
         success {
-            script {
-                echo '✅ Build successful!'
-            }
+            echo '🎉 SUCCESS! Pipeline completed successfully!'
         }
         failure {
-            script {
-                echo '❌ Build failed!'
-            }
+            echo '❌ FAILED! Check the logs for errors.'
         }
     }
 }
