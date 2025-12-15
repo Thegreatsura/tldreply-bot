@@ -2,11 +2,11 @@
  * FINAL Declarative Pipeline - Uses 'tools' for Node version and 'npx' for reliable local execution.
  */
 pipeline {
-    agent any 
+    agent any
 
     tools {
         // Keeps Node.js 20 installed and available (Fixes Node version warnings)
-        nodejs 'node22' 
+        nodejs 'node22'
     }
 
     environment {
@@ -22,26 +22,26 @@ pipeline {
         stage('📦 Install Dependencies') {
             steps {
                 echo '⬇️ Installing dependencies...'
-                sh 'npm ci' 
+                sh 'npm ci'
             }
         }
 
         // Stage 2: Code Quality Checks (FIXED with npx)
         stage('🧪 Lint, Format, & Test (Parallel)') {
             parallel {
-                stage('Lint Check') { 
-                    steps { 
-                        echo '🧹 Running ESLint...'; 
+                stage('Lint Check') {
+                    steps {
+                        echo '🧹 Running ESLint...';
                         // CRITICAL FIX: Run via npm run to use local binaries
-                        sh 'npm run lint' 
+                        sh 'npm run lint'
                     }
                 }
-                stage('Format Check') { 
-                    steps { 
-                        echo '✨ Running Prettier...'; 
+                stage('Format Check') {
+                    steps {
+                        echo '✨ Running Prettier...';
                         // CRITICAL FIX: Run via npm run to use local binaries
-                        sh 'npm run format:check' 
-                    } 
+                        sh 'npm run format:check'
+                    }
                 }
             }
         }
@@ -59,7 +59,8 @@ pipeline {
         stage('🚀 Deploy with PM2') {
             steps {
                 echo "☁️ Deploying application: ${env.PM2_APP_NAME}"
-                
+                echo "☁️ Deploying from new"
+
                 sh '''
                     if pm2 describe $PM2_APP_NAME > /dev/null 2>&1; then
                         echo "App $PM2_APP_NAME is running. Deleting..."
@@ -79,7 +80,7 @@ pipeline {
     post {
         always {
             echo '🧹 Cleaning up workspace...'
-            cleanWs() 
+            cleanWs()
         }
         success {
             echo '🎉 SUCCESS! Pipeline completed successfully!'
