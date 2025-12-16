@@ -59,18 +59,42 @@ export async function setupApiKey(
   // Use the last context for replies (the one with the API key)
   const replyCtx = lastCtx || ctx;
 
-  // Validate API key format
-  if (!apiKey || !GeminiService.validateApiKey(apiKey)) {
-    await replyCtx.reply('❌ Invalid API key format. Please try again with /setup_group.');
+  // Parse input into separate keys
+  const rawKeys = apiKey
+    .split(/[\n,]/) // Split by newline or comma
+    .map(k => k.trim())
+    .filter(k => k.length > 0);
+
+  if (rawKeys.length === 0) {
+    await replyCtx.reply('❌ No API keys found. Please try again with /setup_group.');
     return;
   }
 
-  // Test the API key
+  // Validate format of each key
+  const validFormatKeys: string[] = [];
+  const invalidFormatKeys: string[] = [];
+
+  for (const key of rawKeys) {
+    if (GeminiService.validateApiKey(key)) {
+      validFormatKeys.push(key);
+    } else {
+      invalidFormatKeys.push(key);
+    }
+  }
+
+  if (validFormatKeys.length === 0) {
+    await replyCtx.reply(
+      '❌ Invalid API key format.\n\nNone of the provided keys looked like valid Gemini API keys. They usually start with AIza...'
+    );
+    return;
+  }
+
+  // Test the API keys
   try {
-    const gemini = new GeminiService(apiKey);
+    const gemini = new GeminiService(validFormatKeys);
     await gemini.summarizeMessages([{ content: 'test', timestamp: new Date().toISOString() }]);
 
-    // If successful, save the encrypted key
+    // If successful, save the encrypted key(s)
     if (!encryption || !db) {
       throw new Error('Database or encryption service not available');
     }
@@ -104,10 +128,16 @@ export async function setupApiKey(
       return;
     }
 
-    const encryptedKey = encryption.encrypt(apiKey);
+    const serializedKeys = JSON.stringify(validFormatKeys);
+    const encryptedKey = encryption.encrypt(serializedKeys);
     await db.updateGroupApiKey(groupChatId, encryptedKey);
 
-    await replyCtx.reply('✅ Successfully configured! You can now use /tldr in your group.');
+    let successMessage = `✅ Successfully configured ${validFormatKeys.length} API key(s)! You can now use /tldr in your group.`;
+    if (invalidFormatKeys.length > 0) {
+      successMessage += `\n\n⚠️ ${invalidFormatKeys.length} keys were skipped due to invalid format.`;
+    }
+
+    await replyCtx.reply(successMessage);
   } catch (error: any) {
     console.error('API key validation error:', error);
 
@@ -119,7 +149,7 @@ export async function setupApiKey(
       errorMessage.includes('401')
     ) {
       await replyCtx.reply(
-        '❌ Invalid API key. The API key format is incorrect or the key is invalid. Please check your key and try again.\n\n💡 Get a new key from: https://makersuite.google.com/app/apikey'
+        '❌ Invalid API keys. The keys were rejected by the API. Please check your keys and try again.\n\n💡 Get a new key from: https://makersuite.google.com/app/apikey'
       );
     } else if (
       errorMessage.includes('quota') ||
@@ -127,7 +157,7 @@ export async function setupApiKey(
       errorMessage.includes('429')
     ) {
       await replyCtx.reply(
-        '❌ API quota exceeded. Your Gemini API key has reached its rate limit or quota. Please try again later or check your API usage.'
+        '❌ API quota exceeded during test. However, since the format looks valid, please try /update_api_key later or try adding DIFFERENT keys.'
       );
     } else if (
       errorMessage.includes('Permission denied') ||
@@ -154,10 +184,10 @@ export async function setupApiKey(
 }
 
 /**
- * Helper function to validate and update API key
+ * Helper function to validate and update API key(s)
  */
 async function validateAndUpdateApiKey(
-  apiKey: string,
+  apiKeysInput: string,
   groupChatId: number,
   userId: number,
   ctx: MyConversationContext
@@ -166,12 +196,38 @@ async function validateAndUpdateApiKey(
     `validateAndUpdateApiKey: Starting validation for group ${groupChatId}, user ${userId}`
   );
 
-  // Validate API key format
-  if (!GeminiService.validateApiKey(apiKey)) {
-    console.log(`validateAndUpdateApiKey: Invalid API key format`);
+  // Parse input into separate keys
+  // Split by newline or comma, then trim and filter empty
+  const rawKeys = apiKeysInput
+    .split(/[\n,]/)
+    .map(k => k.trim())
+    .filter(k => k.length > 0);
+
+  if (rawKeys.length === 0) {
     return {
       success: false,
-      message: '❌ Invalid API key format. Please check your key and try again.',
+      message: '❌ No API keys found in input. Please paste your keys again.',
+    };
+  }
+
+  // Validate format of each key
+  const validFormatKeys: string[] = [];
+  const invalidFormatKeys: string[] = [];
+
+  for (const key of rawKeys) {
+    if (GeminiService.validateApiKey(key)) {
+      validFormatKeys.push(key);
+    } else {
+      invalidFormatKeys.push(key);
+    }
+  }
+
+  if (validFormatKeys.length === 0) {
+    console.log(`validateAndUpdateApiKey: No valid API keys format found`);
+    return {
+      success: false,
+      message:
+        '❌ Invalid API key format.\n\nNone of the provided keys looked like valid Gemini API keys. They usually start with AIza...',
     };
   }
 
@@ -197,32 +253,33 @@ async function validateAndUpdateApiKey(
       success: false,
       message:
         '❌ Could not verify admin status. Please make sure the bot is in the group and you are an admin.',
-    };
+      };
   }
 
-  // Test the API key (optional - quota errors don't mean the key is invalid)
+  // Test the API keys
   let hadQuotaError = false;
   try {
-    console.log(`validateAndUpdateApiKey: Testing API key for group ${groupChatId}`);
-    const gemini = new GeminiService(apiKey);
+    console.log(
+      `validateAndUpdateApiKey: Testing ${validFormatKeys.length} API keys for group ${groupChatId}`
+    );
+    // Pass all valid keys to service
+    const gemini = new GeminiService(validFormatKeys);
     await gemini.summarizeMessages([{ content: 'test', timestamp: new Date().toISOString() }]);
     console.log(`validateAndUpdateApiKey: API key test successful for group ${groupChatId}`);
   } catch (error: any) {
+    // If it's a quota error or simple test failure, we might still want to save valid-formatted keys
     console.error(`validateAndUpdateApiKey: API key test failed for group ${groupChatId}:`, error);
     const errorMessage = error.message || 'Unknown error';
 
-    // If it's a quota error during validation, we'll still save the key
-    // The key might be valid but just hit quota limits during testing
     if (
       errorMessage.includes('quota') ||
       errorMessage.includes('QUOTA_EXCEEDED') ||
       errorMessage.includes('429')
     ) {
       console.log(
-        `validateAndUpdateApiKey: Quota error during validation - will save key anyway for group ${groupChatId}`
+        `validateAndUpdateApiKey: Quota error during validation - will save keys anyway`
       );
       hadQuotaError = true;
-      // Continue to save the key - quota errors during test don't mean the key is invalid
     } else if (
       errorMessage.includes('Invalid API key') ||
       errorMessage.includes('API_KEY_INVALID') ||
@@ -231,7 +288,7 @@ async function validateAndUpdateApiKey(
       return {
         success: false,
         message:
-          '❌ Invalid API key. The API key format is incorrect or the key is invalid. Please check your key and try again.\n\n💡 Get a new key from: https://makersuite.google.com/app/apikey',
+          '❌ Invalid API keys. The keys were rejected by the API. Please check and try again.',
       };
     } else if (
       errorMessage.includes('Permission denied') ||
@@ -241,36 +298,32 @@ async function validateAndUpdateApiKey(
       return {
         success: false,
         message:
-          '❌ Permission denied. Your API key may not have access to the Gemini API. Please check your API key permissions.',
+          '❌ Permission denied. Your API keys may not have access to the Gemini API.',
       };
-    } else if (
-      errorMessage.includes('network') ||
-      errorMessage.includes('ECONNREFUSED') ||
-      errorMessage.includes('ENOTFOUND')
-    ) {
-      // Network errors during validation - we'll save the key anyway
-      console.log(
-        `validateAndUpdateApiKey: Network error during validation - will save key anyway for group ${groupChatId}`
-      );
     } else {
-      // Other errors - warn but still save (might be temporary issues)
-      console.warn(
-        `validateAndUpdateApiKey: Unexpected error during validation: ${errorMessage} - will save key anyway`
-      );
+       // Other errors (network etc) - warn but save
+       console.warn(`validateAndUpdateApiKey: Unexpected error: ${errorMessage}`);
     }
   }
 
+
+  const serializedKeys = JSON.stringify(validFormatKeys);
+
   // Update the encrypted key
   try {
-    console.log(`validateAndUpdateApiKey: Encrypting and saving API key for group ${groupChatId}`);
-    const encryptedKey = encryption.encrypt(apiKey);
+    console.log(`validateAndUpdateApiKey: Encrypting and saving ${validFormatKeys.length} keys`);
+    const encryptedKey = encryption.encrypt(serializedKeys);
     await db.updateGroupApiKey(groupChatId, encryptedKey);
-    console.log(`validateAndUpdateApiKey: API key successfully saved for group ${groupChatId}`);
+    console.log(`validateAndUpdateApiKey: API keys successfully saved for group ${groupChatId}`);
 
-    const successMessage =
-      '✅ API key updated successfully! The bot will now use the new key for summaries.';
+    let successMessage = `✅ <b>Success!</b> Updated ${validFormatKeys.length} API key(s).`;
+
+    if (invalidFormatKeys.length > 0) {
+        successMessage += `\n\n⚠️ <b>Note:</b> ${invalidFormatKeys.length} keys were skipped due to invalid format.`;
+    }
+
     const quotaWarning =
-      "\n\n⚠️ Note: The key was saved but couldn't be fully tested due to quota limits. It will be validated on first use.";
+      "\n\n⚠️ Note: The keys were saved but couldn't be fully tested due to quota limits. They will be validated on first use.";
 
     return {
       success: true,
@@ -278,7 +331,7 @@ async function validateAndUpdateApiKey(
     };
   } catch (error) {
     console.error(`validateAndUpdateApiKey: Error saving API key for group ${groupChatId}:`, error);
-    return { success: false, message: '❌ Error saving API key. Please try again.' };
+    return { success: false, message: '❌ Error saving API keys. Please try again.' };
   }
 }
 
@@ -432,12 +485,12 @@ export async function excludeUsers(
 
   // Get recent messages to find user IDs by username
   const recentMessages = await db.query(
-    `SELECT DISTINCT user_id, username, first_name 
-     FROM messages 
-     WHERE telegram_chat_id = $1 
-     AND username IS NOT NULL 
+    `SELECT DISTINCT user_id, username, first_name
+     FROM messages
+     WHERE telegram_chat_id = $1
+     AND username IS NOT NULL
      AND user_id IS NOT NULL
-     ORDER BY timestamp DESC 
+     ORDER BY timestamp DESC
      LIMIT 100`,
     [groupChatId]
   );

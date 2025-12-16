@@ -706,49 +706,85 @@ export class Commands {
         // Check if API key was provided as second argument
         if (args.length >= 3) {
           // Direct update mode - API key provided as argument
-          const apiKey = args.slice(2).join(' ').trim();
+          // Treat everything after the ID as potential keys input
+          const apiKeysInput = args.slice(2).join(' ').trim();
 
-          // Import the validation function (we'll need to export it or move it)
-          // For now, let's do the validation inline
-          if (!GeminiService.validateApiKey(apiKey)) {
-            await ctx.reply('❌ Invalid API key format. Please check your key and try again.');
+          // Parse input into separate keys
+          const rawKeys = apiKeysInput
+            .split(/[\n, ]/) // Split by newline, comma, OR space for command args
+            .map(k => k.trim())
+            .filter(k => k.length > 0);
+
+          if (rawKeys.length === 0) {
+            await ctx.reply('❌ No API keys found. Please check your input.');
             return;
           }
 
-          // Test and update the API key
+          // Validate format of each key
+          const validFormatKeys: string[] = [];
+          const invalidFormatKeys: string[] = [];
+
+          for (const key of rawKeys) {
+            if (GeminiService.validateApiKey(key)) {
+              validFormatKeys.push(key);
+            } else {
+              invalidFormatKeys.push(key);
+            }
+          }
+
+          if (validFormatKeys.length === 0) {
+            await ctx.reply(
+              '❌ Invalid API key format.\n\nNone of the provided keys looked like valid Gemini API keys.'
+            );
+            return;
+          }
+
+          // Test and update the API keys
           try {
-            const gemini = new GeminiService(apiKey);
+            const gemini = new GeminiService(validFormatKeys);
             await gemini.summarizeMessages([
               { content: 'test', timestamp: new Date().toISOString() },
             ]);
 
-            const encryptedKey = this.encryption.encrypt(apiKey);
+            const serializedKeys = JSON.stringify(validFormatKeys);
+            const encryptedKey = this.encryption.encrypt(serializedKeys);
             await this.db.updateGroupApiKey(chatId, encryptedKey);
 
-            await ctx.reply(
-              '✅ API key updated successfully! The bot will now use the new key for summaries.'
-            );
+            let successMessage = `✅ <b>Success!</b> Updated ${validFormatKeys.length} API key(s).`;
+            if (invalidFormatKeys.length > 0) {
+              successMessage += `\n\n⚠️ ${invalidFormatKeys.length} keys were skipped due to invalid format.`;
+            }
+
+            await ctx.reply(successMessage, { parse_mode: 'HTML' });
           } catch (error: any) {
             const errorMessage = error.message || 'Unknown error';
+
+            // If quota error, we save anyway but warn
             if (
+              errorMessage.includes('quota') ||
+              errorMessage.includes('QUOTA_EXCEEDED') ||
+              errorMessage.includes('429')
+            ) {
+               const serializedKeys = JSON.stringify(validFormatKeys);
+               const encryptedKey = this.encryption.encrypt(serializedKeys);
+               await this.db.updateGroupApiKey(chatId, encryptedKey);
+
+               await ctx.reply(
+                  `✅ Updated ${validFormatKeys.length} keys, but validation hit a quota limit.\n\n` +
+                  `They will be verified on next use.`,
+                  { parse_mode: 'HTML' }
+               );
+            } else if (
               errorMessage.includes('Invalid API key') ||
               errorMessage.includes('API_KEY_INVALID') ||
               errorMessage.includes('401')
             ) {
               await ctx.reply(
-                '❌ Invalid API key. Please check your key and try again.\n\n💡 Get a new key from: https://makersuite.google.com/app/apikey'
-              );
-            } else if (
-              errorMessage.includes('quota') ||
-              errorMessage.includes('QUOTA_EXCEEDED') ||
-              errorMessage.includes('429')
-            ) {
-              await ctx.reply(
-                '❌ API quota exceeded. Please try again later or check your API usage.'
+                '❌ Invalid API keys. Please check your keys and try again.\n\n💡 Get a new key from: https://makersuite.google.com/app/apikey'
               );
             } else {
               await ctx.reply(
-                `❌ Failed to validate API key: ${errorMessage}. Please check your key and try again.`
+                `❌ Failed to validate API keys: ${errorMessage}. Please check and try again.`
               );
             }
           }
@@ -792,7 +828,8 @@ export class Commands {
             `🔄 <b>Update API Key</b>\n\n` +
               `Group: <b>${groupName}</b>\n` +
               `ID: <code>${group.telegram_chat_id}</code>\n\n` +
-              `Please paste your new Gemini API key:`,
+              `Please paste your new Gemini API key(s).\n\n` +
+              `You can paste multiple keys separated by commas or new lines.`,
             {
               parse_mode: 'HTML',
             }
@@ -1540,7 +1577,9 @@ export class Commands {
       setUpdateState(chat.id, chatId);
 
       await ctx.editMessageText(
-        `🔄 <b>Update API Key</b>\n\n` + `Please paste your new Gemini API key:`,
+        `🔄 <b>Update API Key</b>\n\n` +
+          `Please paste your new Gemini API key(s).\n\n` +
+          `You can paste multiple keys separated by commas or new lines.`,
         { parse_mode: 'HTML' }
       );
 
@@ -1687,9 +1726,9 @@ export class Commands {
       let excludedUsersList = '';
       if (excludedCount > 0 && settings.excluded_user_ids) {
         const userMessages = await this.db.query(
-          `SELECT DISTINCT user_id, username, first_name 
-           FROM messages 
-           WHERE telegram_chat_id = $1 
+          `SELECT DISTINCT user_id, username, first_name
+           FROM messages
+           WHERE telegram_chat_id = $1
            AND user_id = ANY($2::bigint[])
            ORDER BY username, first_name`,
           [chat.id, settings.excluded_user_ids]

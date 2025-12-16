@@ -1,10 +1,154 @@
 import { GoogleGenAI } from '@google/genai';
 
 export class GeminiService {
-  private ai: GoogleGenAI;
+  private keys: string[];
+  private currentKeyIndex: number = 0;
+  private ais: GoogleGenAI[];
+  private exhaustedKeys: Set<number> = new Set();
+  private exhaustionTimers: Map<number, NodeJS.Timeout> = new Map();
 
-  constructor(apiKey: string) {
-    this.ai = new GoogleGenAI({ apiKey });
+  constructor(apiKeyOrKeys: string | string[]) {
+    if (Array.isArray(apiKeyOrKeys)) {
+      this.keys = apiKeyOrKeys;
+    } else {
+      // Handle potential JSON string if passed directly
+      try {
+        const parsed = JSON.parse(apiKeyOrKeys);
+        if (Array.isArray(parsed)) {
+          this.keys = parsed;
+        } else {
+          this.keys = [apiKeyOrKeys];
+        }
+      } catch (e) {
+        this.keys = [apiKeyOrKeys];
+      }
+    }
+
+    // Initialize clients for all keys
+    this.ais = this.keys.map(key => new GoogleGenAI({ apiKey: key }));
+  }
+
+  private getNextAvailableKeyIndex(): number {
+    const startIndex = this.currentKeyIndex;
+    let attempts = 0;
+
+    while (attempts < this.keys.length) {
+      if (!this.exhaustedKeys.has(this.currentKeyIndex)) {
+        return this.currentKeyIndex;
+      }
+      this.currentKeyIndex = (this.currentKeyIndex + 1) % this.keys.length;
+      attempts++;
+    }
+
+    // If all keys are exhausted, just return the current one and hope for the best
+    return startIndex;
+  }
+
+  private markKeyAsExhausted(index: number) {
+    if (this.exhaustedKeys.has(index)) return;
+
+    console.log(`⚠️ Key at index ${index} marked as exhausted (Quota Exceeded)`);
+    this.exhaustedKeys.add(index);
+
+    // Reset after 1 minute (Gemini quotas usually reset per minute)
+    const timer = setTimeout(() => {
+      this.exhaustedKeys.delete(index);
+      this.exhaustionTimers.delete(index);
+      console.log(`✅ Key at index ${index} recovered from exhaustion state`);
+    }, 60 * 1000);
+
+    this.exhaustionTimers.set(index, timer);
+  }
+
+  /**
+   * Generates content with automatic model fallback and key rotation
+   */
+  private async generateContentWithFallback(prompt: string): Promise<string> {
+    // Models found available for this key (no 1.5 versions available)
+    const models = [
+      'gemini-2.0-flash-001',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash-lite-001',
+      'gemini-flash-latest',
+      'gemini-2.5-pro'
+    ];
+    const maxGlobalRetries = 3;
+    let lastError: any;
+
+    for (let attempt = 0; attempt < maxGlobalRetries; attempt++) {
+      // Rotate key if needed
+      const keyIndex = this.getNextAvailableKeyIndex();
+      this.currentKeyIndex = keyIndex; // Update pointer
+      const currentClient = this.ais[keyIndex];
+
+      // Try models in order
+      for (const model of models) {
+        try {
+          const response = await currentClient.models.generateContent({
+            model: model,
+            contents: prompt,
+          });
+          return response.text || 'Generated summary (no text returned)';
+        } catch (error: any) {
+          lastError = error;
+          const errorMessage = error.message || 'Unknown error';
+
+          // Check for quota/rate limits
+          if (
+            errorMessage.includes('QUOTA_EXCEEDED') ||
+            errorMessage.includes('429') ||
+            errorMessage.includes('RESOURCE_EXHAUSTED')
+          ) {
+            this.markKeyAsExhausted(keyIndex);
+            console.warn(
+              `Model ${model} failed with key ${keyIndex}: Quota exceeded.`
+            );
+
+            // Critical Fix:
+            // If we have multiple keys and valid ones remain, break to try next key with SAME model (via outer loop).
+            // If we are out of keys (or only had one), continue to NEXT MODEL (fallback) with same key (or whatever key we get).
+            const hasOtherKeys = this.keys.some((_, i) => !this.exhaustedKeys.has(i));
+
+            if (hasOtherKeys) {
+               console.warn(`Rotating to next available key...`);
+               break; // Break model loop -> outer loop retries with next key (starting at models[0])
+            } else {
+               console.warn(`No other keys available. Falling back to next model...`);
+               continue; // Continue model loop -> try next model (e.g. gemini-1.5) with same key
+            }
+          }
+
+          // If it's a model not found or server error, try next model with SAME key
+          if (
+            errorMessage.includes('NOT_FOUND') ||
+            errorMessage.includes('503') ||
+            errorMessage.includes('500')
+          ) {
+            console.warn(
+              `Model ${model} failed: ${errorMessage}. Falling back to next model...`
+            );
+            continue; // Try next model
+          }
+
+          // If auth error, maybe key is bad?
+          if (errorMessage.includes('API_KEY_INVALID')) {
+             console.error(`Invalid key at index ${keyIndex}`);
+             break;
+          }
+
+          throw error; // Throw other errors immediately
+        }
+      }
+
+      // Wait before global retry if we haven't succeeded yet
+      if (attempt < maxGlobalRetries - 1) {
+         // Add simple jitter: 1000ms + random(0-1000ms)
+         const delay = 1000 + Math.random() * 1000;
+         await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    throw lastError;
   }
 
   async summarizeMessages(
@@ -48,9 +192,13 @@ export class GeminiService {
         throw new Error(
           'Permission denied. Your API key may not have access to the Gemini API. Please check your API key permissions.'
         );
-      } else if (errorMessage.includes('QUOTA_EXCEEDED') || errorMessage.includes('429')) {
+      } else if (
+        errorMessage.includes('QUOTA_EXCEEDED') ||
+        errorMessage.includes('429') ||
+        errorMessage.includes('RESOURCE_EXHAUSTED')
+      ) {
         throw new Error(
-          'API quota exceeded. Your Gemini API key has reached its rate limit or quota. Please try again later or check your API usage.'
+          'API quota exceeded. All provided API keys have reached their rate limit. Please try again later or add more keys using /update_api_key.'
         );
       } else if (errorMessage.includes('timeout') || errorMessage.includes('TIMEOUT')) {
         throw new Error('Request timeout. The API request took too long. Please try again.');
@@ -140,12 +288,9 @@ Unified Summary:`;
 
     // Summarize the merged summaries
     try {
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-2.0-flash-001',
-        contents: mergePrompt,
-      });
+      const result = await this.generateContentWithFallback(mergePrompt);
       return (
-        response.text ||
+        result ||
         `Summary of ${totalMessages} messages (processed in ${chunks.length} chunks)`
       );
     } catch (error: any) {
@@ -191,16 +336,16 @@ Unified Summary:`;
       prompt = options.customPrompt.replace('{{messages}}', formattedMessages);
     } else {
       const styleInstructions = this.getStyleInstructions(options?.summaryStyle || 'default');
-      prompt = `You are a helpful assistant that summarizes Telegram group chat conversations. 
+      prompt = `You are a helpful assistant that summarizes Telegram group chat conversations.
     ${styleInstructions}
-    
+
     Focus on:
     - Main topics discussed
     - Key decisions or conclusions
     - Important announcements
     - Ongoing questions or unresolved issues
     - Skip greetings, emojis-only messages, and spam
-    
+
     CRITICAL: When referring to users in the summary, ALWAYS use their actual username or name exactly as shown in the conversation:
     - If a user has a username (shown as @username), use "@username" in the summary exactly as shown - including any underscores that are part of the username (e.g., @user_name)
     - If a user only has a first name (shown without @), use just the first name exactly as shown - including any underscores if present
@@ -208,42 +353,26 @@ Unified Summary:`;
     - Do NOT wrap usernames/names in brackets [], or add formatting around them
     - Write usernames/names exactly as they appear: @username (with underscores if part of the username) or FirstName
     - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but keep underscores that are part of actual usernames/names
-    
+
     IMPORTANT: Format your response using markdown:
     - Use **bold** for important topics or section headers
     - Use bullet points (* item) for lists
     - Keep the summary clear and organized
     - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but preserve underscores that are part of usernames/names (e.g., @user_name is correct)
     - DO NOT use any underline formatting in the summary
-    
+
     Conversation:
     ${formattedMessages}
-    
+
     Summary:`;
     }
 
-    // Call API with retry logic
-    const maxRetries = 3;
-    const baseDelay = 1000;
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        const response = await this.ai.models.generateContent({
-          model: 'gemini-2.0-flash-001',
-          contents: prompt,
-        });
-        return response.text || 'Generated summary (no text returned)';
-      } catch (error: any) {
-        if (attempt < maxRetries - 1) {
-          const delay = baseDelay * Math.pow(2, attempt);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          continue;
-        }
-        throw error;
-      }
+    // Call API with fallback for models and keys
+    try {
+      return await this.generateContentWithFallback(prompt);
+    } catch (error: any) {
+      throw error;
     }
-
-    throw new Error('Failed to generate summary after multiple retries.');
   }
 
   private getStyleInstructions(style: string): string {
