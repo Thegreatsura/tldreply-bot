@@ -3,7 +3,7 @@ import { Database } from '../../db/database';
 import { EncryptionService } from '../../utils/encryption';
 import { GeminiService } from '../../services/gemini';
 import { logger } from '../../utils/logger';
-import { markdownToHtml } from '../../utils/formatter';
+import { markdownToHtml, splitMessage } from '../../utils/formatter';
 import { MyContext } from '../commands/BaseCommand';
 
 export class SchedulerService {
@@ -32,6 +32,49 @@ export class SchedulerService {
             continue;
           }
 
+          // Evaluate current time in the group's timezone
+          let currentHour: number;
+          let currentMinute: number;
+          let currentDay: number;
+
+          try {
+            const tz = settings.schedule_timezone || 'UTC';
+            const formatter = new Intl.DateTimeFormat('en-US', {
+              timeZone: tz,
+              hour: 'numeric',
+              minute: 'numeric',
+              hour12: false,
+            });
+
+            const parts = formatter.formatToParts(now);
+            const getPart = (type: string) => parts.find(p => p.type === type)?.value;
+
+            currentHour = parseInt(getPart('hour') || '0', 10);
+            currentMinute = parseInt(getPart('minute') || '0', 10);
+            // Intl weekday is 1-7 (Mon-Sun) or something else? actually en-US usually 0-6 but check.
+            // Day calculation: Sun=0, Mon=1...
+            const dayFormatter = new Intl.DateTimeFormat('en-US', {
+              timeZone: tz,
+              weekday: 'short',
+            });
+            const dayName = dayFormatter.format(now);
+            const days: { [key: string]: number } = {
+              Sun: 0,
+              Mon: 1,
+              Tue: 2,
+              Wed: 3,
+              Thu: 4,
+              Fri: 5,
+              Sat: 6,
+            };
+            currentDay = days[dayName] ?? now.getUTCDay();
+          } catch (e) {
+            // Fallback to UTC if timezone is invalid
+            currentHour = now.getUTCHours();
+            currentMinute = now.getUTCMinutes();
+            currentDay = now.getUTCDay();
+          }
+
           // Parse schedule time
           const [scheduleHour, scheduleMinute] = (settings.schedule_time || '09:00:00')
             .split(':')
@@ -50,7 +93,6 @@ export class SchedulerService {
             // Run weekly summaries on Sunday (day 0) at the scheduled time
             if (currentDay !== 0) continue;
           }
-          // For daily, any day is fine
 
           // Check if we already ran today
           if (settings.last_scheduled_summary) {
@@ -95,7 +137,7 @@ export class SchedulerService {
 
       // Filter messages based on settings
       const filteredMessages = messages.filter(msg => {
-        if (settings.exclude_bot_messages && msg.username === 'bot') return false;
+        if (settings.exclude_bot_messages && msg.is_bot) return false;
         if (settings.exclude_commands && msg.content?.startsWith('/')) return false;
         if (
           settings.excluded_user_ids &&
@@ -108,9 +150,18 @@ export class SchedulerService {
 
       if (filteredMessages.length === 0) return;
 
+      const formattedMessages = filteredMessages.map(msg => ({
+        username: msg.username,
+        firstName: msg.first_name,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        isBot: msg.is_bot,
+        isChannel: msg.is_channel,
+      }));
+
       const decryptedKey = this.encryption.decrypt(group.gemini_api_key_encrypted);
       const gemini = new GeminiService(decryptedKey);
-      const summary = await gemini.summarizeMessages(filteredMessages, {
+      const summary = await gemini.summarizeMessages(formattedMessages, {
         customPrompt: settings.custom_prompt,
         summaryStyle: settings.summary_style,
       });
@@ -119,11 +170,22 @@ export class SchedulerService {
       const formattedSummary = markdownToHtml(summary);
 
       const frequencyText = settings.schedule_frequency === 'weekly' ? 'Weekly' : 'Daily';
-      await this.bot.api.sendMessage(
-        chatId,
-        `📅 <b>${frequencyText} Scheduled Summary</b>\n\n${formattedSummary}`,
-        { parse_mode: 'HTML' }
-      );
+      const header = `📅 <b>${frequencyText} Scheduled Summary</b>`;
+
+      const MAX_LENGTH = 4000;
+      if (formattedSummary.length <= MAX_LENGTH) {
+        await this.bot.api.sendMessage(chatId, `${header}\n\n${formattedSummary}`, {
+          parse_mode: 'HTML',
+        });
+      } else {
+        const chunks = splitMessage(formattedSummary, MAX_LENGTH);
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkHeader = `${header} (${i + 1}/${chunks.length})`;
+          await this.bot.api.sendMessage(chatId, `${chunkHeader}\n\n${chunks[i]}`, {
+            parse_mode: 'HTML',
+          });
+        }
+      }
     } catch (error) {
       logger.error(`Error generating scheduled summary for group ${chatId}:`, error);
     }

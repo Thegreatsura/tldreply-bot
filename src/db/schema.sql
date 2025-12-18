@@ -21,16 +21,18 @@ CREATE TABLE IF NOT EXISTS messages (
     username TEXT,
     first_name TEXT,
     content TEXT,
+    is_bot BOOLEAN DEFAULT false,
+    is_channel BOOLEAN DEFAULT false,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(telegram_chat_id, message_id)
 );
 
 -- Index for faster message retrieval
-CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp 
+CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp
 ON messages(telegram_chat_id, timestamp DESC);
 
-CREATE INDEX IF NOT EXISTS idx_messages_chat_message 
+CREATE INDEX IF NOT EXISTS idx_messages_chat_message
 ON messages(telegram_chat_id, message_id);
 
 -- Summaries table: stores auto-generated summaries of messages before deletion
@@ -46,10 +48,10 @@ CREATE TABLE IF NOT EXISTS summaries (
 );
 
 -- Index for faster summary retrieval and cleanup
-CREATE INDEX IF NOT EXISTS idx_summaries_chat_created 
+CREATE INDEX IF NOT EXISTS idx_summaries_chat_created
 ON summaries(telegram_chat_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_summaries_created_at 
+CREATE INDEX IF NOT EXISTS idx_summaries_created_at
 ON summaries(created_at);
 
 -- Group settings table: stores customization and scheduling settings
@@ -71,7 +73,7 @@ CREATE TABLE IF NOT EXISTS group_settings (
 );
 
 -- Index for scheduled summaries
-CREATE INDEX IF NOT EXISTS idx_group_settings_scheduled 
+CREATE INDEX IF NOT EXISTS idx_group_settings_scheduled
 ON group_settings(telegram_chat_id, scheduled_enabled, schedule_frequency);
 
 -- Note: Messages are cached for 48 hours before automatic deletion and summarization

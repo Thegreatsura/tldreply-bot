@@ -108,9 +108,15 @@ export class CleanupService {
             continue;
           }
 
+          // Fetch group settings
+          const settings = await this.db.getGroupSettings(chatId);
+
           // Skip if no valid messages (empty content)
           const validMessages = messages.filter(
-            msg => msg.content && msg.content.trim().length > 0
+            msg =>
+              msg.content &&
+              msg.content.trim().length > 0 &&
+              !(settings.exclude_bot_messages && msg.is_bot)
           );
           if (validMessages.length === 0) {
             logger.info(`Group ${chatId} has no valid messages to summarize`);
@@ -130,12 +136,17 @@ export class CleanupService {
             firstName: msg.first_name,
             content: msg.content,
             timestamp: msg.timestamp,
+            isBot: msg.is_bot,
+            isChannel: msg.is_channel,
           }));
 
           // Generate summary
           const decryptedKey = this.encryption.decrypt(group.gemini_api_key_encrypted);
           const gemini = new GeminiService(decryptedKey);
-          const summaryText = await gemini.summarizeMessages(formattedMessages);
+          const summaryText = await gemini.summarizeMessages(formattedMessages, {
+            summaryStyle: settings.summary_style,
+            customPrompt: settings.custom_prompt,
+          });
 
           // Store summary
           await this.db.insertSummary({

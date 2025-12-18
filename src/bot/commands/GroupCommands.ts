@@ -132,7 +132,17 @@ export class GroupCommands extends BaseCommand {
 
       const decryptedKey = this.encryption.decrypt(group.gemini_api_key_encrypted);
       const gemini = new GeminiService(decryptedKey);
-      const summary = await gemini.summarizeMessages(filteredMessages, {
+
+      const formattedMessages = filteredMessages.map(msg => ({
+        username: msg.username,
+        firstName: msg.first_name,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        isBot: msg.is_bot,
+        isChannel: msg.is_channel,
+      }));
+
+      const summary = await gemini.summarizeMessages(formattedMessages, {
         customPrompt: settings.custom_prompt,
         summaryStyle: summaryStyle,
       });
@@ -431,13 +441,37 @@ export class GroupCommands extends BaseCommand {
     }
 
     try {
+      // Improved identity detection
+      let userId = ctx.from?.id;
+      let username = ctx.from?.username;
+      let firstName = ctx.from?.first_name;
+      const isBot = ctx.from?.is_bot || false;
+      let isChannel = false;
+
+      // Handle message sent by a channel or anonymous admin
+      if (message.sender_chat) {
+        if (message.sender_chat.type === 'channel') {
+          isChannel = true;
+          userId = message.sender_chat.id;
+          username = message.sender_chat.username;
+          firstName = message.sender_chat.title;
+        } else if (message.sender_chat.id === chat.id) {
+          // Anonymous group admin post
+          userId = message.sender_chat.id;
+          username = 'admin';
+          firstName = 'Group Admin';
+        }
+      }
+
       await this.db.insertMessage({
         chatId: chat.id,
         messageId: message.message_id,
-        userId: ctx.from?.id,
-        username: ctx.from?.username,
-        firstName: ctx.from?.first_name,
+        userId: userId,
+        username: username,
+        firstName: firstName,
         content: content.substring(0, 5000), // Limit content length
+        isBot: isBot,
+        isChannel: isChannel,
       });
     } catch (error) {
       logger.error('Error caching message:', error);
@@ -448,7 +482,7 @@ export class GroupCommands extends BaseCommand {
 
   private filterMessages(messages: any[], settings: any, ctx?: MyContext): any[] {
     return messages.filter(msg => {
-      if (settings.exclude_bot_messages && msg.user_id && msg.username === 'bot') {
+      if (settings.exclude_bot_messages && msg.is_bot) {
         return false;
       }
 

@@ -72,6 +72,10 @@ export class GeminiService {
       'gemini-2.0-flash-lite-001',
       'gemini-flash-latest',
       'gemini-2.5-pro',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro',
+      'gemini-2.0-flash-exp',
+      'gemini-2.0-flash-lite-preview-02-05',
     ];
     const maxGlobalRetries = 3;
     let lastError: any;
@@ -154,6 +158,8 @@ export class GeminiService {
       firstName?: string;
       content: string;
       timestamp: string;
+      isBot?: boolean;
+      isChannel?: boolean;
     }>,
     options?: {
       customPrompt?: string | null;
@@ -222,6 +228,8 @@ export class GeminiService {
       firstName?: string;
       content: string;
       timestamp: string;
+      isBot?: boolean;
+      isChannel?: boolean;
     }>,
     options?: {
       customPrompt?: string | null;
@@ -297,6 +305,8 @@ Unified Summary:`;
       firstName?: string;
       content: string;
       timestamp: string;
+      isBot?: boolean;
+      isChannel?: boolean;
     }>,
     options?: {
       customPrompt?: string | null;
@@ -310,8 +320,14 @@ Unified Summary:`;
     // Format messages for context
     const formattedMessages = messages
       .map((msg, idx) => {
-        // Use @username if available, otherwise use firstName without @
-        const user = msg.username ? `@${msg.username}` : msg.firstName || 'Unknown';
+        let user: string;
+        if (msg.isChannel) {
+          user = msg.firstName || 'Channel';
+        } else if (msg.username === 'admin') {
+          user = 'Group Admin';
+        } else {
+          user = msg.username ? `@${msg.username}` : msg.firstName || 'Unknown';
+        }
         const content = msg.content;
         return `${idx + 1}. ${user}: ${content}`;
       })

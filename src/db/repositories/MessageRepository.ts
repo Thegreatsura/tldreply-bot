@@ -9,17 +9,30 @@ export class MessageRepository extends BaseRepository {
     username?: string;
     firstName?: string;
     content: string;
+    isBot?: boolean;
+    isChannel?: boolean;
   }): Promise<void> {
     await this.db.query(
-      `INSERT INTO messages (telegram_chat_id, message_id, user_id, username, first_name, content)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO messages (telegram_chat_id, message_id, user_id, username, first_name, content, is_bot, is_channel)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (telegram_chat_id, message_id)
        DO UPDATE SET
          content = EXCLUDED.content,
          username = EXCLUDED.username,
          first_name = EXCLUDED.first_name,
-         user_id = EXCLUDED.user_id`,
-      [data.chatId, data.messageId, data.userId, data.username, data.firstName, data.content]
+         user_id = EXCLUDED.user_id,
+         is_bot = EXCLUDED.is_bot,
+         is_channel = EXCLUDED.is_channel`,
+      [
+        data.chatId,
+        data.messageId,
+        data.userId,
+        data.username,
+        data.firstName,
+        data.content,
+        data.isBot || false,
+        data.isChannel || false,
+      ]
     );
   }
 
