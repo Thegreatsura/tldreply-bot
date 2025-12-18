@@ -4,6 +4,7 @@ import { EncryptionService } from '../utils/encryption';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { Pool } from 'pg';
+import { logger } from '../utils/logger';
 
 // Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
@@ -13,7 +14,7 @@ const ENCRYPTION_SECRET = process.env.ENCRYPTION_SECRET!;
 
 async function debugModels() {
   if (!DATABASE_URL || !ENCRYPTION_SECRET) {
-    console.error('❌ Missing DB or Encryption secrets in .env');
+    logger.error('❌ Missing DB or Encryption secrets in .env');
     process.exit(1);
   }
 
@@ -49,12 +50,12 @@ async function debugModels() {
     );
 
     if (res.rows.length === 0) {
-      console.log('❌ No configured groups found in DB.');
+      logger.error('❌ No configured groups found in DB.');
       process.exit(0);
     }
 
     const encryptedKey = res.rows[0].gemini_api_key_encrypted;
-    console.log('🔐 Found encrypted key.');
+    logger.info('🔐 Found encrypted key.');
 
     let apiKey = '';
     try {
@@ -67,43 +68,43 @@ async function debugModels() {
         apiKey = decrypted;
       }
     } catch (err) {
-      console.error('❌ Failed to decrypt key:', err);
+      logger.error('❌ Failed to decrypt key:', err);
       process.exit(1);
     }
 
-    console.log(`🔑 Using API Key: ${apiKey.substring(0, 8)}...`);
+    logger.info(`🔑 Using API Key: ${apiKey.substring(0, 8)}...`);
 
     const genAI = new GoogleGenAI({ apiKey });
 
-    console.log('📋 Listing models (all pages)...');
+    logger.info('📋 Listing models (all pages)...');
 
     // The list() method returns an AsyncIterable in many Google SDKs
     const response = await genAI.models.list();
 
     // Check if response has models property directly (single page) or is iterable
-    console.log('\n✅ Available Models:');
+    logger.info('\n✅ Available Models:');
 
     // Pager iteration
     const foundModels: string[] = [];
 
     for await (const model of response) {
-      console.log(`- ${model.name}`);
+      logger.info(`- ${model.name}`);
       if (model.name) {
         foundModels.push(model.name);
       }
     }
 
-    console.log(`\nTotal models found: ${foundModels.length}`);
+    logger.info(`\nTotal models found: ${foundModels.length}`);
 
     const flashModels = foundModels.filter((n: string) => n.includes('flash'));
-    console.log('Flash models found:', flashModels);
+    logger.info('Flash models found: ' + flashModels.join(', '));
 
     const proModels = foundModels.filter((n: string) => n.includes('pro'));
-    console.log('Pro models found:', proModels);
+    logger.info('Pro models found: ' + proModels.join(', '));
 
     await pool.end();
   } catch (error: any) {
-    console.error('❌ Error:', error);
+    logger.error('❌ Error:', error);
   }
 }
 

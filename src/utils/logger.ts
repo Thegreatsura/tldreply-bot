@@ -49,7 +49,7 @@ const winstonInstance = createLogger({
   ],
 });
 
-// Add console transport if not in production
+// Add logger transport if not in production
 if (process.env.NODE_ENV !== 'production') {
   winstonInstance.add(
     new transports.Console({

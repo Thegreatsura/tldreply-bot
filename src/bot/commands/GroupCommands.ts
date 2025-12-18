@@ -1,3 +1,4 @@
+import { NextFunction } from 'grammy';
 import { BaseCommand, MyContext } from './BaseCommand';
 import { GeminiService } from '../../services/gemini';
 import { logger } from '../../utils/logger';
@@ -378,15 +379,17 @@ export class GroupCommands extends BaseCommand {
 
   // --- Message Caching ---
 
-  async handleMessageCache(ctx: MyContext) {
+  async handleMessageCache(ctx: MyContext, next: NextFunction) {
     await this.processMessageForCache(ctx, ctx.message);
+    await next();
   }
 
-  async handleEditedMessageCache(ctx: MyContext) {
+  async handleEditedMessageCache(ctx: MyContext, next: NextFunction) {
     const editedMessage = ctx.editedMessage || ctx.update.edited_message;
     if (editedMessage) {
       await this.processMessageForCache(ctx, editedMessage);
     }
+    await next();
   }
 
   private async processMessageForCache(ctx: MyContext, message: any) {

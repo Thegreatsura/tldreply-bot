@@ -395,7 +395,7 @@ export async function updateApiKey(
         `❌ An error occurred: ${error.message || 'Unknown error'}. Please try again with /update_api_key.`
       );
     } catch (replyError) {
-      console.error('Failed to send error message:', replyError);
+      logger.error('Failed to send error message:', replyError);
     }
   }
 }

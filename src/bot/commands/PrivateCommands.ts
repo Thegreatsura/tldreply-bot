@@ -1,4 +1,4 @@
-import { InlineKeyboard } from 'grammy';
+import { InlineKeyboard, NextFunction } from 'grammy';
 import { BaseCommand, MyContext } from './BaseCommand';
 import { setUpdateState } from '../../services/services';
 import { GeminiService } from '../../services/gemini';
@@ -38,7 +38,7 @@ export class PrivateCommands extends BaseCommand {
 
   // --- Start & Help ---
 
-  async handleStart(ctx: MyContext) {
+  async handleStart(ctx: MyContext, next: NextFunction) {
     const chat = ctx.chat;
     if (!chat) return;
 
@@ -94,22 +94,19 @@ export class PrivateCommands extends BaseCommand {
           reply_markup: keyboard,
         }
       );
+    } else {
+      await next();
     }
   }
 
-  async handleHelp(ctx: MyContext) {
+  async handleHelp(ctx: MyContext, next: NextFunction) {
     const chat = ctx.chat;
     if (!chat) return;
 
     if (chat.type === 'private') {
       await this.handlePrivateHelp(ctx);
     } else {
-      // If called in group, delegate or show minimal help?
-      // Group help is handled by GroupCommands normally, but command routing might land here if not separated.
-      // But we will register only private commands here.
-      // Actually, standard practice is that /help works everywhere.
-      // But since we split files, we might need a shared help command or just let GroupCommands handle group help.
-      // For now, let's assume this is only for private chat help as registered.
+      await next();
     }
   }
 
@@ -152,14 +149,14 @@ export class PrivateCommands extends BaseCommand {
     );
   }
 
-  private async handleButtonHelp(ctx: MyContext) {
+  private async handleButtonHelp(ctx: MyContext, next: NextFunction) {
     await ctx.answerCallbackQuery();
-    await this.handlePrivateHelp(ctx);
+    await this.handleHelp(ctx, next);
   }
 
-  private async handleButtonBack(ctx: MyContext) {
+  private async handleButtonBack(ctx: MyContext, next: NextFunction) {
     await ctx.answerCallbackQuery();
-    await this.handleStart(ctx);
+    await this.handleStart(ctx, next);
   }
 
   // --- Setup Group ---
@@ -475,7 +472,7 @@ export class PrivateCommands extends BaseCommand {
             return;
           }
         } catch (error) {
-          console.log('Could not verify group access, proceeding with removal:', error);
+          logger.warn('Could not verify group access, proceeding with removal:', { error });
         }
 
         const deleted = await this.db.deleteGroup(chatId);
@@ -588,7 +585,7 @@ export class PrivateCommands extends BaseCommand {
           return;
         }
       } catch (error) {
-        console.log('Could not verify group access, proceeding with removal:', error);
+        logger.warn('Could not verify group access, proceeding with removal:', { error });
       }
 
       const deleted = await this.db.deleteGroup(chatId);
@@ -688,8 +685,8 @@ export class PrivateCommands extends BaseCommand {
           const apiKeysInput = args.slice(2).join(' ').trim();
           const rawKeys = apiKeysInput
             .split(/[\n, ]/)
-            .map(k => k.trim())
-            .filter(k => k.length > 0);
+            .map((k: string) => k.trim())
+            .filter((k: string) => k.length > 0);
 
           if (rawKeys.length === 0) {
             await ctx.reply('❌ No API keys found. Please check your input.');

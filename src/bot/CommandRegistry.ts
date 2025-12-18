@@ -19,7 +19,7 @@ export class CommandRegistry {
 
   registerAll() {
     this.privateCommands.register();
-    this.groupCommands.register();
     this.adminCommands.register();
+    this.groupCommands.register();
   }
 }

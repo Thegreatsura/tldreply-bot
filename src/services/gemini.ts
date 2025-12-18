@@ -48,7 +48,7 @@ export class GeminiService {
   private markKeyAsExhausted(index: number) {
     if (this.exhaustedKeys.has(index)) return;
 
-    console.log(`⚠️ Key at index ${index} marked as exhausted (Quota Exceeded)`);
+    logger.warn(`⚠️ Key at index ${index} marked as exhausted (Quota Exceeded)`);
     this.exhaustedKeys.add(index);
 
     // Reset after 1 minute (Gemini quotas usually reset per minute)
