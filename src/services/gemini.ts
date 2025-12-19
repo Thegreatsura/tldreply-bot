@@ -167,6 +167,7 @@ export class GeminiService {
       summaryStyle?: string;
       chatId?: number;
       chatUsername?: string;
+      topicFocus?: string;
     },
     retryCount: number = 0
   ): Promise<string> {
@@ -240,6 +241,7 @@ export class GeminiService {
       summaryStyle?: string;
       chatId?: number;
       chatUsername?: string;
+      topicFocus?: string;
     },
     chunkSize: number = 900
   ): Promise<string> {
@@ -283,6 +285,7 @@ You have received ${chunks.length} partial summaries covering ${totalMessages} t
 - Maintains chronological order where relevant
 - Highlights the most important topics, decisions, and announcements
 - Preserves the key points from each partial summary
+${options?.topicFocus ? `- **STRICT FOCUS**: The user has requested a focus on the topic: "${options.topicFocus}". Ensure the final summary filters and highlights information specifically related to this topic while maintaining coherence.` : ''}
 
 CRITICAL: When referring to users in the summary, ALWAYS use their actual username or name exactly as shown in the partial summaries:
     - If a user has a username (shown as @username), use "@username" in the summary exactly as shown - including any underscores that are part of the username (e.g., @user_name)
@@ -321,6 +324,7 @@ Unified Summary:`;
       summaryStyle?: string;
       chatId?: number;
       chatUsername?: string;
+      topicFocus?: string;
     }
   ): Promise<string> {
     if (messages.length === 0) {
@@ -354,8 +358,15 @@ Unified Summary:`;
       prompt = options.customPrompt.replace('{{messages}}', formattedMessages);
     } else {
       const styleInstructions = this.getStyleInstructions(options?.summaryStyle || 'default');
+      const focusInstruction = options?.topicFocus
+        ? `\n    STRICT FOCUS: The user is only interested in messages related to: "${options.topicFocus}".
+    - Summarize information ONLY related to this topic.
+    - If a message is unrelated, IGNORE it.
+    - If NO messages in the conversation relate to this topic, return: "No messages found related to the topic: ${options.topicFocus}".`
+        : '';
+
       prompt = `You are a helpful assistant that summarizes Telegram group chat conversations.
-    ${styleInstructions}
+    ${styleInstructions}${focusInstruction}
 
     Focus on:
     - Main topics discussed

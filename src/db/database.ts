@@ -97,8 +97,13 @@ export class Database {
   async insertMessage(data: any): Promise<void> {
     return this.messages.insertMessage(data);
   }
-  async getMessagesSinceTimestamp(chatId: number, since: Date, limit?: number): Promise<any[]> {
-    return this.messages.getMessagesSinceTimestamp(chatId, since, limit);
+  async getMessagesSinceTimestamp(
+    chatId: number,
+    since: Date,
+    limit?: number,
+    username?: string
+  ): Promise<any[]> {
+    return this.messages.getMessagesSinceTimestamp(chatId, since, limit, username);
   }
   async getMessagesSinceMessageId(
     chatId: number,
@@ -107,8 +112,8 @@ export class Database {
   ): Promise<any[]> {
     return this.messages.getMessagesSinceMessageId(chatId, sinceMessageId, limit);
   }
-  async getLastNMessages(chatId: number, count: number): Promise<any[]> {
-    return this.messages.getLastNMessages(chatId, count);
+  async getLastNMessages(chatId: number, count: number, username?: string): Promise<any[]> {
+    return this.messages.getLastNMessages(chatId, count, username);
   }
   async getMessagesToCleanup(hoursAgo: number): Promise<any[]> {
     return this.messages.getMessagesToCleanup(hoursAgo);

@@ -11,6 +11,7 @@ export class GroupCommands extends BaseCommand {
   register() {
     this.bot.command('tldr', this.handleTLDR.bind(this));
     this.bot.command('tldr_info', this.handleTLDRInfo.bind(this));
+    this.bot.command(['tldr_help', 'help'], this.handleTLDRHelp.bind(this));
     this.bot.command('enable', this.handleEnable.bind(this));
     this.bot.command('disable', this.handleDisable.bind(this));
 
@@ -88,12 +89,17 @@ export class GroupCommands extends BaseCommand {
         // Count-based: Get last N messages
         const count = this.parseCount(parsedArgs.input);
         summaryLabel = `last ${count} messages`;
-        messages = await this.db.getLastNMessages(chat.id, count);
+        messages = await this.db.getLastNMessages(chat.id, count, parsedArgs.username);
       } else {
         // Time-based: Get messages since timestamp
         const since = this.parseTimeframe(parsedArgs.input);
         summaryLabel = parsedArgs.input;
-        messages = await this.db.getMessagesSinceTimestamp(chat.id, since, 10000);
+        messages = await this.db.getMessagesSinceTimestamp(
+          chat.id,
+          since,
+          10000,
+          parsedArgs.username
+        );
       }
       if (messages.length === 0) {
         const errorMsg = this.isCountBased(parsedArgs.input)
@@ -148,6 +154,7 @@ export class GroupCommands extends BaseCommand {
         summaryStyle: summaryStyle,
         chatId: chat.id,
         chatUsername: chat.username,
+        topicFocus: parsedArgs.topicFocus,
       });
 
       // Convert markdown to HTML
@@ -255,6 +262,7 @@ export class GroupCommands extends BaseCommand {
         summaryStyle: summaryStyle,
         chatId: chat.id,
         chatUsername: chat.username,
+        topicFocus: parsedArgs.topicFocus,
       });
 
       // Convert markdown to HTML
@@ -293,6 +301,28 @@ export class GroupCommands extends BaseCommand {
     }
   }
 
+  // --- TLDR Help ---
+
+  async handleTLDRHelp(ctx: MyContext) {
+    const helpMessage =
+      '📖 <b>TLDR Bot Help</b>\n\n' +
+      'Get a summary of group conversations using Gemini AI.\n\n' +
+      '📐 <b>Standard Command Rule:</b>\n' +
+      '<code>/tldr [range] [@username] [style] [topic]</code>\n\n' +
+      '<b>Components:</b>\n' +
+      '• <b>Range</b>: <code>1h</code>, <code>6h</code>, <code>day</code>, or message count <code>100</code>\n' +
+      '• <b>@username</b>: Filter messages from a specific user\n' +
+      '• <b>Style</b>: <code>brief</code>, <code>detailed</code>, <code>bullet</code>, or <code>timeline</code>\n' +
+      '• <b>Topic</b>: Any words to focus the summary on a specific subject\n\n' +
+      '💡 <b>Examples:</b>\n' +
+      '• <code>/tldr 6h</code> - Last 6 hours\n' +
+      "• <code>/tldr @user 1d</code> - User's talk in last day\n" +
+      '• <code>/tldr 500 Secret Santa</code> - Focus on a topic\n\n' +
+      '<i>Reply to any message with <code>/tldr</code> to summarize from that point forward!</i>';
+
+    await ctx.reply(helpMessage, { parse_mode: 'HTML' });
+  }
+
   // --- TLDR Info ---
 
   async handleTLDRInfo(ctx: MyContext) {
@@ -319,7 +349,7 @@ export class GroupCommands extends BaseCommand {
           `Status: ${status}\n` +
           `Bot: ${enabledStatus}\n\n` +
           `🔒 Messages auto-delete after 48 hours\n\n` +
-          `<i>Use /tldr [timeframe] or reply to a message with /tldr</i>`,
+          `<i>Use /tldr_help for usage guide or reply to a message with /tldr</i>`,
         { parse_mode: 'HTML' }
       );
     } catch (error) {
@@ -517,22 +547,54 @@ export class GroupCommands extends BaseCommand {
     });
   }
 
-  private parseTLDRArgs(args: string[]): { input: string; style?: string } {
+  private parseTLDRArgs(args: string[]): {
+    input: string;
+    style?: string;
+    topicFocus?: string;
+    username?: string;
+  } {
     const validStyles = ['default', 'detailed', 'brief', 'bullet', 'timeline'];
+    let input = '1h';
+    let style: string | undefined;
+    let username: string | undefined;
+    const topicParts: string[] = [];
 
-    if (args.length === 0) {
-      return { input: '1h' };
+    for (const arg of args) {
+      const lowerArg = arg.toLowerCase();
+
+      // Check if it's a style
+      if (validStyles.includes(lowerArg)) {
+        style = lowerArg;
+        continue;
+      }
+
+      // Check if it's a mention
+      if (arg.startsWith('@')) {
+        username = arg.slice(1);
+        continue;
+      }
+
+      // Check if it's timeframe/count (only if we haven't set one yet)
+      const isTimeframe =
+        /^\d+(h|d|h)$/.test(lowerArg) ||
+        ['day', 'week'].includes(lowerArg) ||
+        /^\d+$/.test(lowerArg);
+
+      if (isTimeframe && input === '1h') {
+        input = lowerArg;
+        continue;
+      }
+
+      // Otherwise, it's part of the topic focus
+      topicParts.push(arg);
     }
 
-    const lastWord = args[args.length - 1]?.toLowerCase();
-
-    if (lastWord && validStyles.includes(lastWord)) {
-      const inputParts = args.slice(0, -1);
-      const input = inputParts.length > 0 ? inputParts.join(' ').trim() : '1h';
-      return { input, style: lastWord };
-    }
-
-    return { input: args.join(' ').trim() || '1h' };
+    return {
+      input,
+      style,
+      username,
+      topicFocus: topicParts.length > 0 ? topicParts.join(' ') : undefined,
+    };
   }
 
   private isCountBased(input: string): boolean {

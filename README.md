@@ -104,7 +104,7 @@ If you prefer the manual method, you can still use `/setup_group <chat_id>` in p
 
 **Group Chat:**
 - `/setup` - Start group setup (easiest method - auto-detects chat ID!)
-- `/tldr [timeframe]` - Get summary (e.g., `/tldr 1h`, `/tldr 6h`, `/tldr day`, `/tldr week`)
+- `/tldr [range] [@user] [style] [topic]` - Get summary with the **Standard Command Rule**
 - `Reply to message` + `/tldr` - Summarize from that message to now
 - `/tldr_info` - Show group configuration and status
 - `/tldr_help` or `/help` - Show help for group commands
@@ -140,6 +140,24 @@ If you prefer the manual method, you can still use `/setup_group <chat_id>` in p
 /tldr 1000    # Summarize last 1000 messages
 /tldr 50      # Summarize last 50 messages
 ```
+
+**Focused & User summaries:**
+```bash
+/tldr @username      # Summarize only messages from @username
+/tldr 1d @username   # @username's talk in the last day
+/tldr Secret Santa   # Focus on a specific topic (semantic search)
+/tldr 500 meeting    # Focus on "meeting" in last 500 messages
+/tldr 6h brief @user party  # Combined: last 6h, brief style, from @user, about "party"
+```
+
+### The Standard Command Rule
+To make usage predictable, follow this standard order:
+` /tldr [range] [@username] [style] [topic] `
+
+- **Range**: <code>1h</code>, <code>6h</code>, <code>day</code>, or message count <code>100</code>
+- **@username**: Filter messages from a specific user
+- **Style**: <code>brief</code>, <code>detailed</code>, <code>bullet</code>, or <code>timeline</code>
+- **Topic**: Any words to focus the summary on a specific subject
 
 **Reply-based summaries:**
 ```
@@ -199,7 +217,7 @@ This project includes a GitHub Actions workflow for automated deployment to a VP
 
 1. **Configure GitHub Secrets:**
    Go to your repository → Settings → Secrets and variables → Actions → New repository secret
-   
+
    Add the following secrets:
    - `VPS_HOST`: Your VPS IP address (e.g., `111.xxx.x.x`)
    - `VPS_USERNAME`: Your VPS username (e.g., `username`)
@@ -211,10 +229,10 @@ This project includes a GitHub Actions workflow for automated deployment to a VP
    # Install Node.js (if not already installed)
    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
    sudo apt-get install -y nodejs
-   
+
    # Install PM2 globally
    sudo npm install -g pm2
-   
+
    # Create project directory (if needed)
    sudo mkdir -p /var/www/tldreply
    sudo chown -R $USER:$USER /var/www/tldreply

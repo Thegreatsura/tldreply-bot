@@ -140,7 +140,10 @@ export class PrivateCommands extends BaseCommand {
         '<b>/remove_group &lt;chat_id&gt;</b>\n' +
         '<i>Remove a group configuration</i>\n' +
         '<i>Example: /remove_group -123456789</i>\n\n' +
-        '<b>💡 Tip:</b> Run /setup in your group for the easiest setup!\n\n' +
+        '<b>💡 Tips:</b>\n' +
+        '• Run /setup in your group for the easiest setup!\n' +
+        '• Use <code>/tldr @username</code> to summarize a specific person.\n' +
+        '• Use <code>/tldr "topic name"</code> for focused summaries!\n\n' +
         '<b>🔑 Get API Key:</b> https://makersuite.google.com/app/apikey',
       {
         parse_mode: 'HTML',

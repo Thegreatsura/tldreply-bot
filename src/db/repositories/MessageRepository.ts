@@ -39,14 +39,23 @@ export class MessageRepository extends BaseRepository {
   async getMessagesSinceTimestamp(
     chatId: number,
     since: Date,
-    limit: number = 1000
+    limit: number = 1000,
+    username?: string
   ): Promise<any[]> {
     // Allow up to 10000 messages for hierarchical summarization
     const maxLimit = Math.min(limit, 10000);
-    const result = await this.db.query(
-      'SELECT * FROM messages WHERE telegram_chat_id = $1 AND timestamp >= $2 ORDER BY timestamp ASC LIMIT $3',
-      [chatId, since, maxLimit]
-    );
+    let query = 'SELECT * FROM messages WHERE telegram_chat_id = $1 AND timestamp >= $2';
+    const params: any[] = [chatId, since];
+
+    if (username) {
+      query += ` AND username = $${params.length + 1}`;
+      params.push(username);
+    }
+
+    query += ` ORDER BY timestamp ASC LIMIT $${params.length + 1}`;
+    params.push(maxLimit);
+
+    const result = await this.db.query(query, params);
     return result.rows;
   }
 
@@ -64,13 +73,21 @@ export class MessageRepository extends BaseRepository {
     return result.rows;
   }
 
-  async getLastNMessages(chatId: number, count: number): Promise<any[]> {
+  async getLastNMessages(chatId: number, count: number, username?: string): Promise<any[]> {
     // Get the last N messages, ordered by timestamp descending, then reverse to chronological order
     const maxCount = Math.min(count, 10000); // Limit to 10000 messages
-    const result = await this.db.query(
-      'SELECT * FROM messages WHERE telegram_chat_id = $1 ORDER BY timestamp DESC, message_id DESC LIMIT $2',
-      [chatId, maxCount]
-    );
+    let query = 'SELECT * FROM messages WHERE telegram_chat_id = $1';
+    const params: any[] = [chatId];
+
+    if (username) {
+      query += ` AND username = $${params.length + 1}`;
+      params.push(username);
+    }
+
+    query += ` ORDER BY timestamp DESC, message_id DESC LIMIT $${params.length + 1}`;
+    params.push(maxCount);
+
+    const result = await this.db.query(query, params);
     // Reverse to get chronological order (oldest first)
     return result.rows.reverse();
   }
