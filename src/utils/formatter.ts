@@ -14,6 +14,9 @@ export function markdownToHtml(text: string): string {
   // Convert **bold** to <b>bold</b> (non-greedy, handle multiple per line)
   html = html.replace(/\*\*([^*]+?)\*\*/g, '<b>$1</b>');
 
+  // Convert markdown links [text](url) to HTML <a> tags
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+
   // Convert bullet points: * item or - item (preserve indentation)
   // Process line by line to handle nested bullets correctly
   const lines = html.split('\n');

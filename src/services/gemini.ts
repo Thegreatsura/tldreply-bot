@@ -294,7 +294,7 @@ CRITICAL: When referring to users in the summary, ALWAYS use their actual userna
     - Do NOT wrap usernames/names in brackets [], or add formatting around them
     - Write usernames/names exactly as they appear: @username (with underscores if part of the username) or FirstName
     - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but keep underscores that are part of actual usernames/names
-    - **CRITICAL: Each point in the unified summary MUST include a link to the original message if provided in the partial summaries. Use the exact link format: (https://t.me/...)**
+    - **CRITICAL: Each point in the unified summary MUST include a link to the original message if provided in the partial summaries. Use the message ID as the link text in markdown format: [message_id](https://t.me/...)**
 
 Partial Summaries:
 ${mergedSummaries}
@@ -343,9 +343,10 @@ Unified Summary:`;
           user = msg.username ? `@${msg.username}` : msg.firstName || 'Unknown';
         }
         const content = msg.content;
+        const linkText = msg.messageId ? `[${msg.messageId}]` : 'link';
         const link =
           options?.chatId && msg.messageId
-            ? ` (${this.formatTelegramLink(options.chatId, msg.messageId, options.chatUsername)})`
+            ? ` (${linkText}(${this.formatTelegramLink(options.chatId, msg.messageId, options.chatUsername)}))`
             : '';
         return `${idx + 1}. ${user}: ${content}${link}`;
       })
@@ -389,7 +390,7 @@ Unified Summary:`;
     - Keep the summary clear and organized
     - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but preserve underscores that are part of usernames/names (e.g., @user_name is correct)
     - DO NOT use any underline formatting in the summary
-    - **CRITICAL: For each point in the summary, you MUST include the original message link provided in the conversation (e.g., (https://t.me/...)) right after the information from that message.**
+    - **CRITICAL: For each point in the summary, you MUST include the original message link provided in the conversation. Use the message ID as the link text in markdown format (e.g., [12345](https://t.me/...)) right after the information from that message.**
 
     Conversation:
     ${formattedMessages}

@@ -88,12 +88,18 @@ export class GroupCommands extends BaseCommand {
       if (this.isCountBased(parsedArgs.input)) {
         // Count-based: Get last N messages
         const count = this.parseCount(parsedArgs.input);
-        summaryLabel = `last ${count} messages`;
+        const countLabel = `last ${count} messages`;
+        const userLabel = parsedArgs.username ? ` from @${parsedArgs.username}` : '';
+        const topicLabel = parsedArgs.topicFocus ? ` on topic "${parsedArgs.topicFocus}"` : '';
+        summaryLabel = `${countLabel}${userLabel}${topicLabel}`;
         messages = await this.db.getLastNMessages(chat.id, count, parsedArgs.username);
       } else {
         // Time-based: Get messages since timestamp
         const since = this.parseTimeframe(parsedArgs.input);
-        summaryLabel = parsedArgs.input;
+        const timeframeLabel = parsedArgs.input;
+        const userLabel = parsedArgs.username ? ` from @${parsedArgs.username}` : '';
+        const topicLabel = parsedArgs.topicFocus ? ` on topic "${parsedArgs.topicFocus}"` : '';
+        summaryLabel = `${timeframeLabel}${userLabel}${topicLabel}`;
         messages = await this.db.getMessagesSinceTimestamp(
           chat.id,
           since,
@@ -101,6 +107,8 @@ export class GroupCommands extends BaseCommand {
           parsedArgs.username
         );
       }
+
+      logger.info(`Generating summary for ${chat.id}: ${summaryLabel} (${messages.length} messages)`);
       if (messages.length === 0) {
         const errorMsg = this.isCountBased(parsedArgs.input)
           ? '📭 No messages found in the database.'
