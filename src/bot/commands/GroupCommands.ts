@@ -108,7 +108,9 @@ export class GroupCommands extends BaseCommand {
         );
       }
 
-      logger.info(`Generating summary for ${chat.id}: ${summaryLabel} (${messages.length} messages)`);
+      logger.info(
+        `Generating summary for ${chat.id}: ${summaryLabel} (${messages.length} messages)`
+      );
       if (messages.length === 0) {
         const errorMsg = this.isCountBased(parsedArgs.input)
           ? '📭 No messages found in the database.'
@@ -144,6 +146,20 @@ export class GroupCommands extends BaseCommand {
       // Use user-provided style if available, otherwise fall back to group setting
       const summaryStyle = parsedArgs.style || settings.summary_style;
 
+      // Validate topic one more time before sending to API
+      const validatedTopic = parsedArgs.topicFocus
+        ? this.sanitizeTopic(parsedArgs.topicFocus)
+        : undefined;
+
+      if (parsedArgs.topicFocus && !validatedTopic) {
+        await ctx.api.editMessageText(
+          chat.id,
+          loadingMsg.message_id,
+          '❌ Invalid topic provided. Topics cannot contain instructions or commands. Please use a simple topic description instead.\n\nExample: <code>/tldr 1000 meeting</code>'
+        );
+        return;
+      }
+
       const decryptedKey = this.encryption.decrypt(group.gemini_api_key_encrypted);
       const gemini = new GeminiService(decryptedKey);
 
@@ -162,11 +178,19 @@ export class GroupCommands extends BaseCommand {
         summaryStyle: summaryStyle,
         chatId: chat.id,
         chatUsername: chat.username,
-        topicFocus: parsedArgs.topicFocus,
+        topicFocus: validatedTopic || undefined,
       });
 
+      // Convert message ID references to markdown links
+      const summaryWithLinks = this.convertMessageIdsToLinks(
+        summary,
+        chat.id,
+        chat.username,
+        filteredMessages
+      );
+
       // Convert markdown to HTML
-      const formattedSummary = markdownToHtml(summary);
+      const formattedSummary = markdownToHtml(summaryWithLinks);
 
       // Send summary, splitting into multiple messages if too long
       await this.sendSummaryMessage(
@@ -264,17 +288,39 @@ export class GroupCommands extends BaseCommand {
         messageId: msg.message_id,
       }));
 
+      // Validate topic one more time before sending to API
+      const validatedTopic = parsedArgs.topicFocus
+        ? this.sanitizeTopic(parsedArgs.topicFocus)
+        : undefined;
+
+      if (parsedArgs.topicFocus && !validatedTopic) {
+        await ctx.api.editMessageText(
+          chat.id,
+          loadingMsg.message_id,
+          '❌ Invalid topic provided. Topics cannot contain instructions or commands. Please use a simple topic description instead.\n\nExample: <code>/tldr meeting</code>'
+        );
+        return;
+      }
+
       const gemini = new GeminiService(decryptedKey);
       const summary = await gemini.summarizeMessages(formattedMessages, {
         customPrompt: settings.custom_prompt,
         summaryStyle: summaryStyle,
         chatId: chat.id,
         chatUsername: chat.username,
-        topicFocus: parsedArgs.topicFocus,
+        topicFocus: validatedTopic || undefined,
       });
 
+      // Convert message ID references to markdown links
+      const summaryWithLinks = this.convertMessageIdsToLinks(
+        summary,
+        chat.id,
+        chat.username,
+        filteredMessages
+      );
+
       // Convert markdown to HTML
-      const formattedSummary = markdownToHtml(summary);
+      const formattedSummary = markdownToHtml(summaryWithLinks);
 
       // Send summary, splitting into multiple messages if too long
       await this.sendSummaryMessage(
@@ -555,6 +601,157 @@ export class GroupCommands extends BaseCommand {
     });
   }
 
+  /**
+   * Sanitizes and validates topic input using a whitelist approach to prevent prompt injection
+   * Uses standard input validation: character whitelist, length limits, and pattern detection
+   */
+  private sanitizeTopic(topic: string): string | null {
+    if (!topic || topic.trim().length === 0) {
+      return null;
+    }
+
+    // Standard length limit to prevent abuse
+    const MAX_TOPIC_LENGTH = 200;
+    const MIN_TOPIC_LENGTH = 1;
+    const trimmedTopic = topic.trim();
+
+    if (trimmedTopic.length < MIN_TOPIC_LENGTH || trimmedTopic.length > MAX_TOPIC_LENGTH) {
+      return null;
+    }
+
+    // Standard character whitelist: allow alphanumeric, spaces, hyphens, apostrophes, and basic punctuation
+    // This prevents injection of code, special characters, and control sequences
+    const ALLOWED_CHARS = /^[a-zA-Z0-9\s\-'.,!?()]+$/;
+
+    if (!ALLOWED_CHARS.test(trimmedTopic)) {
+      logger.warn(`Rejected topic with invalid characters: ${trimmedTopic.substring(0, 100)}`);
+      return null;
+    }
+
+    // Normalize whitespace (standard practice)
+    const normalized = trimmedTopic
+      .replace(/\s+/g, ' ') // Collapse multiple spaces
+      .replace(/^\s+|\s+$/g, '') // Trim
+      .trim();
+
+    // Check for excessive punctuation (might indicate code/injection attempts)
+    const punctuationCount = (normalized.match(/[.,!?()]/g) || []).length;
+    const charCount = normalized.length;
+    const punctuationRatio = punctuationCount / charCount;
+
+    // Reject if more than 30% of characters are punctuation (likely not a natural topic)
+    if (punctuationRatio > 0.3) {
+      logger.warn(`Rejected topic with excessive punctuation: ${normalized.substring(0, 100)}`);
+      return null;
+    }
+
+    // Check for suspicious patterns: multiple consecutive special characters or unusual sequences
+    // This catches things like "..", "---", "()()" which are uncommon in natural topics
+    if (/([.,!?()\-'])\1{2,}/.test(normalized)) {
+      logger.warn(
+        `Rejected topic with suspicious character patterns: ${normalized.substring(0, 100)}`
+      );
+      return null;
+    }
+
+    // Check for instruction injection patterns (case-insensitive)
+    const lowerTopic = normalized.toLowerCase();
+
+    // Common instruction injection keywords and phrases
+    const injectionPatterns = [
+      // Direct instruction commands
+      /\b(ignore|forget|disregard|override|skip|bypass)\s+(current|previous|all|the|these)\s+(instructions?|prompts?|rules?|commands?|directives?)\b/i,
+      /\b(new|different|alternative|replacement)\s+(instructions?|prompts?|system|rules?)\b/i,
+      /\b(you\s+(are|must|should|will|need|have\s+to|cannot|can't|do\s+not|don't))\b/i,
+      /\b(do\s+not|don't|never|always|must\s+not|should\s+not)\s+(follow|obey|use|execute|run|do)\b/i,
+
+      // System prompt injection attempts
+      /\b(system\s+prompt|system\s+instructions?|system\s+message)\b/i,
+      /\b(act\s+as|pretend\s+to\s+be|roleplay\s+as|you're\s+now)\b/i,
+
+      // Command-like patterns
+      /\b(execute|run|perform|carry\s+out|implement)\s+(this|the|these|following)\b/i,
+      /\b(follow|obey|adhere\s+to)\s+(this|the|these|following|new)\s+(instruction|command|directive)\b/i,
+
+      // Ranking/comparison instructions (common injection pattern)
+      /\b(rank|compare|list|sort|order|categorize|classify)\s+(the|all|every)\s+(richest|poorest|best|worst|top|bottom)\b/i,
+      /\b(rank|compare|list|sort|order)\s+(people|users|members|individuals|persons)\b/i,
+
+      // Output manipulation attempts
+      /\b(output|return|respond|reply|say|write|generate)\s+(this|the|following|instead)\b/i,
+      /\b(instead\s+of|rather\s+than|instead|replace)\s+(summarizing|summarize|the\s+summary)\b/i,
+
+      // XML/tag injection attempts
+      /<[^>]+>/i,
+      /<\/?[a-z]+>/i,
+
+      // Code injection patterns
+      /\b(function|def|class|import|require|eval|exec)\s*\(/i,
+      /[{}[\]\\|`~]/,
+    ];
+
+    for (const pattern of injectionPatterns) {
+      if (pattern.test(normalized)) {
+        logger.warn(
+          `Rejected topic with instruction injection pattern: ${normalized.substring(0, 100)}`
+        );
+        return null;
+      }
+    }
+
+    // Check for instruction-like sentence structure (starts with imperative verbs)
+    const imperativeVerbs =
+      /\b(ignore|forget|disregard|override|skip|rank|list|compare|sort|order|execute|run|perform|follow|obey|act|pretend|output|return|respond|say|write|generate)\b/i;
+    if (imperativeVerbs.test(normalized) && normalized.split(/\s+/).length <= 10) {
+      // If topic is short and starts with imperative verb, likely an instruction
+      const words = normalized.toLowerCase().split(/\s+/);
+      const firstWord = words[0];
+      const instructionStarters = [
+        'ignore',
+        'forget',
+        'disregard',
+        'override',
+        'skip',
+        'rank',
+        'list',
+        'compare',
+        'sort',
+        'order',
+        'execute',
+        'run',
+        'perform',
+        'follow',
+        'obey',
+        'act',
+        'pretend',
+        'output',
+        'return',
+        'respond',
+        'say',
+        'write',
+        'generate',
+        'do',
+        "don't",
+        'never',
+        'always',
+      ];
+
+      if (instructionStarters.includes(firstWord) && words.length <= 8) {
+        logger.warn(
+          `Rejected topic starting with imperative verb (likely instruction): ${normalized.substring(0, 100)}`
+        );
+        return null;
+      }
+    }
+
+    // Final validation: ensure we have a valid topic after all checks
+    if (normalized.length === 0 || normalized.length > MAX_TOPIC_LENGTH) {
+      return null;
+    }
+
+    return normalized;
+  }
+
   private parseTLDRArgs(args: string[]): {
     input: string;
     style?: string;
@@ -597,11 +794,15 @@ export class GroupCommands extends BaseCommand {
       topicParts.push(arg);
     }
 
+    // Sanitize the topic before returning
+    const rawTopic = topicParts.length > 0 ? topicParts.join(' ') : undefined;
+    const sanitizedTopic = rawTopic ? this.sanitizeTopic(rawTopic) : undefined;
+
     return {
       input,
       style,
       username,
-      topicFocus: topicParts.length > 0 ? topicParts.join(' ') : undefined,
+      topicFocus: sanitizedTopic || undefined,
     };
   }
 
@@ -661,6 +862,63 @@ export class GroupCommands extends BaseCommand {
     }
 
     return new Date(now - hours * 60 * 60 * 1000);
+  }
+
+  /**
+   * Converts message ID references to consistent format: number (link)
+   * Handles both single [51364] and multiple [52343, 43242, 34234] formats
+   */
+  private convertMessageIdsToLinks(
+    summary: string,
+    chatId: number,
+    chatUsername: string | undefined,
+    messages: any[]
+  ): string {
+    let result = summary;
+
+    // First, convert existing markdown links [number](link) to number (link) format
+    result = result.replace(/\[(\d+)\]\((https?:\/\/[^\s)]+)\)/g, (match, messageIdStr, link) => {
+      return `${messageIdStr} (${link})`;
+    });
+
+    // Handle multiple message IDs in brackets: [52343, 43242, 34234]
+    result = result.replace(/\[(\d+(?:\s*,\s*\d+)+)\]/g, (match, idsStr) => {
+      const ids = idsStr
+        .split(',')
+        .map((id: string) => id.trim())
+        .filter((id: string) => /^\d+$/.test(id));
+      const formattedIds = ids.map((id: string) => {
+        const messageId = parseInt(id, 10);
+        const link = this.formatTelegramLink(chatId, messageId, chatUsername);
+        return `${messageId} (${link})`;
+      });
+      // Wrap in brackets to show they're links
+      return `[${formattedIds.join(', ')}]`;
+    });
+
+    // Convert single message ID references [51364] that are not already converted
+    // Pattern: [ followed by digits, followed by ] that is NOT followed by (
+    result = result.replace(/\[(\d+)\](?!\()/g, (match, messageIdStr) => {
+      const messageId = parseInt(messageIdStr, 10);
+      const link = this.formatTelegramLink(chatId, messageId, chatUsername);
+      // Use consistent format: number (link)
+      return `${messageId} (${link})`;
+    });
+
+    return result;
+  }
+
+  /**
+   * Formats a Telegram link for a message
+   */
+  private formatTelegramLink(chatId: number, messageId: number, chatUsername?: string): string {
+    if (chatUsername) {
+      return `https://t.me/${chatUsername}/${messageId}`;
+    }
+    // For private groups/channels, use the c/ID format
+    // Telegram IDs usually look like -100123456789. We need the part after -100
+    const cleanId = Math.abs(chatId).toString().replace(/^100/, '');
+    return `https://t.me/c/${cleanId}/${messageId}`;
   }
 
   private async sendSummaryMessage(

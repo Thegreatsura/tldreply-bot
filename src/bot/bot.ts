@@ -89,8 +89,21 @@ export class TLDRBot {
   }
 
   async start() {
-    await this.bot.start();
-    logger.info('✅ Bot is running!');
+    try {
+      logger.info('🔄 Starting bot connection...');
+      await this.bot.start();
+      logger.info('✅ Bot is running!');
+    } catch (error) {
+      logger.error('❌ Failed to start bot:', error);
+      if (error instanceof Error) {
+        logger.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name,
+        });
+      }
+      throw error; // Re-throw to let caller handle it
+    }
 
     // Run cleanup every 12 hours (summarize and delete messages older than 48 hours)
     this.cleanupInterval = setInterval(

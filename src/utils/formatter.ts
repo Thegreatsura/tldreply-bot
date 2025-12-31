@@ -14,7 +14,37 @@ export function markdownToHtml(text: string): string {
   // Convert **bold** to <b>bold</b> (non-greedy, handle multiple per line)
   html = html.replace(/\*\*([^*]+?)\*\*/g, '<b>$1</b>');
 
-  // Convert markdown links [text](url) to HTML <a> tags
+  // Convert message ID links in brackets format: [52343 (link1), 43242 (link2)]
+  // This handles multiple message IDs wrapped in brackets - must be done first
+  // Use a placeholder to temporarily mark these so we don't double-convert
+  const bracketLinkPlaceholders: { [key: string]: string } = {};
+  let bracketPlaceholderIndex = 0;
+
+  html = html.replace(/\[([^\]]+)\]/g, (match, content) => {
+    // Check if content contains message ID links in format: number (link)
+    const linkPattern = /(\d+)\s+\((https?:\/\/[^\s)]+)\)/g;
+    if (linkPattern.test(content)) {
+      // Reset regex lastIndex
+      linkPattern.lastIndex = 0;
+      // Replace each number (link) with HTML link
+      const formatted = content.replace(linkPattern, '<a href="$2">$1</a>');
+      const placeholder = `__BRACKET_LINK_${bracketPlaceholderIndex++}__`;
+      bracketLinkPlaceholders[placeholder] = `[${formatted}]`;
+      return placeholder;
+    }
+    return match; // Not a message ID link format, leave as is
+  });
+
+  // Convert single message ID links: number (link) to HTML <a> tags
+  // This handles standalone message ID links (not in brackets)
+  html = html.replace(/(\d+)\s+\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+
+  // Restore bracket-formatted links
+  for (const [placeholder, value] of Object.entries(bracketLinkPlaceholders)) {
+    html = html.replace(placeholder, value);
+  }
+
+  // Convert markdown links [text](url) to HTML <a> tags (for any remaining markdown links)
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
 
   // Convert bullet points: * item or - item (preserve indentation)

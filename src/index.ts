@@ -45,7 +45,31 @@ async function main() {
   const bot = new TLDRBot(TELEGRAM_TOKEN, db, encryption);
 
   // Start bot
-  await bot.start();
+  try {
+    logger.info('🔄 Attempting to start bot...');
+    await bot.start();
+    logger.info('✅ Bot started successfully!');
+  } catch (error) {
+    logger.error('❌ Failed to start bot:', error);
+    if (error instanceof Error) {
+      logger.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      });
+      // Check for common error types
+      if (error.message.includes('Unauthorized') || error.message.includes('401')) {
+        logger.error(
+          '💡 This usually means the TELEGRAM_TOKEN is invalid or revoked. Please check your bot token.'
+        );
+      } else if (error.message.includes('network') || error.message.includes('ECONNREFUSED')) {
+        logger.error(
+          '💡 Network error: Unable to connect to Telegram API. Check your internet connection.'
+        );
+      }
+    }
+    throw error; // Re-throw to exit with error code
+  }
 
   // Graceful shutdown
   process.once('SIGINT', () => bot.stop());
