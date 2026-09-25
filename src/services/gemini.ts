@@ -1,6 +1,23 @@
 import { GoogleGenAI } from '@google/genai';
 import { logger } from '../utils/logger';
 import { config } from '../config';
+import { containsSpoiler } from '../utils/spoilers';
+
+/**
+ * How to carry spoilers into a summary. Added only when the input has
+ * ||spoiler|| markers, so ordinary summaries are not nudged to use them.
+ */
+export const SPOILER_INSTRUCTIONS = `SPOILERS: Text wrapped in ||double pipes|| was hidden as a spoiler by whoever posted it (plot points, endings, results, answers). Readers of the summary have not chosen to see it.
+- Any detail taken from inside ||...|| must stay inside ||...|| in your summary, e.g. @alex shared how the finale ends: ||the captain survives||
+- Leave enough context outside the markers that readers know what the spoiler is about, and keep usernames and message links outside them
+- Never restate, hint at or paraphrase a hidden detail outside the markers, including in bold topic titles
+- Keep each ||...|| on one line, and do not put ** or other formatting across its edges
+- Only use ||...|| for content that was hidden in the source`;
+
+/** SPOILER_INSTRUCTIONS as a prompt section when `input` needs it, else nothing. */
+function spoilerSection(input: string): string {
+  return containsSpoiler(input) ? `\n${SPOILER_INSTRUCTIONS}\n` : '';
+}
 
 /** A single model's failure while walking the fallback chain. */
 export interface ModelFailure {
@@ -338,7 +355,8 @@ Produce a single coherent summary that:
 
 CRITICAL: Refer to users exactly as they appear in the sections - @username or FirstName. Never use generic terms like "a user" or "someone". Do not wrap names in brackets.
 
-Note: older periods are summaries of summaries, so they carry less detail than the recent section. Do not present that as the older period being less important.`;
+Note: older periods are summaries of summaries, so they carry less detail than the recent section. Do not present that as the older period being less important.
+${spoilerSection(sections)}`;
 
     const prompt = this.buildStructuredPrompt(systemInstructions, {
       topic: options?.topicFocus,
@@ -423,7 +441,8 @@ CRITICAL: When referring to users in the summary, ALWAYS use their actual userna
 - Do NOT wrap usernames/names in brackets [], or add formatting around them
 - Write usernames/names exactly as they appear: @username (with underscores if part of the username) or FirstName
 - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but keep underscores that are part of actual usernames/names
-- **CRITICAL: Each point in the unified summary MUST include a link to the original message if provided in the partial summaries. Use the message ID as the link text in markdown format: [message_id](https://t.me/...)**`;
+- **CRITICAL: Each point in the unified summary MUST include a link to the original message if provided in the partial summaries. Use the message ID as the link text in markdown format: [message_id](https://t.me/...)**
+${spoilerSection(mergedSummaries)}`;
 
     const mergePrompt = this.buildStructuredPrompt(systemInstructions, {
       topic: options?.topicFocus,
@@ -497,7 +516,8 @@ CRITICAL: When referring to users in the summary, ALWAYS use their actual userna
 ${customPromptText}
 
 CRITICAL: When referring to users in the summary, ALWAYS use their actual username or name exactly as shown in the conversation.
-Format your response using markdown.`,
+Format your response using markdown.
+${spoilerSection(formattedMessages)}`,
         {
           topic: options?.topicFocus,
           messages: formattedMessages,
@@ -531,7 +551,7 @@ IMPORTANT: Format your response using markdown:
 - DO NOT use underscores for formatting/emphasis (like _text_ for underlines) - but preserve underscores that are part of usernames/names (e.g., @user_name is correct)
 - DO NOT use any underline formatting in the summary
 - **CRITICAL: For each point in the summary, you MUST include the original message link provided in the conversation. Use the message ID as the link text in markdown format (e.g., [12345](https://t.me/...)) right after the information from that message.**
-
+${spoilerSection(formattedMessages)}
 ${
   options?.topicFocus
     ? `TOPIC FOCUS INSTRUCTIONS:

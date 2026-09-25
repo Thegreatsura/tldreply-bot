@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { escapeHtml } from './formatter';
+import { escapeHtml, markdownToHtml } from './formatter';
+import { markSpoilers } from './spoilers';
 
 describe('escapeHtml', () => {
   test('neutralises tags a Telegram display name could carry', () => {
@@ -20,5 +21,37 @@ describe('escapeHtml', () => {
 
   test('leaves ordinary and non-Latin text untouched', () => {
     assert.equal(escapeHtml('ገና በዓል — Q3 planning'), 'ገና በዓል — Q3 planning');
+  });
+});
+
+describe('markdownToHtml spoilers', () => {
+  test('renders ||text|| as a Telegram spoiler', () => {
+    assert.equal(
+      markdownToHtml('@alex: ||the captain survives||'),
+      '@alex: <tg-spoiler>the captain survives</tg-spoiler>'
+    );
+  });
+
+  test('keeps formatting inside a spoiler', () => {
+    assert.equal(
+      markdownToHtml('* ending: ||**he** lives||'),
+      '• ending: <tg-spoiler><b>he</b> lives</tg-spoiler>'
+    );
+  });
+
+  test('escapes markup inside a spoiler', () => {
+    assert.equal(markdownToHtml('||<script>||'), '<tg-spoiler>&lt;script&gt;</tg-spoiler>');
+  });
+
+  test('leaves a logical or alone', () => {
+    assert.equal(markdownToHtml('if a || b || c'), 'if a || b || c');
+  });
+
+  test('renders what the message cache stores', () => {
+    const cached = markSpoilers('act one\nact two', [{ type: 'spoiler', offset: 0, length: 15 }]);
+    assert.equal(
+      markdownToHtml(cached),
+      '<tg-spoiler>act one</tg-spoiler>\n<tg-spoiler>act two</tg-spoiler>'
+    );
   });
 });

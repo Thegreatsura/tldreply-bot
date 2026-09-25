@@ -1,3 +1,5 @@
+import { replaceSpoilers } from './spoilers';
+
 /**
  * Escapes text for safe interpolation into a Telegram HTML message.
  *
@@ -15,7 +17,8 @@ export function escapeHtml(text: string): string {
 /**
  * Convert markdown to HTML for Telegram
  * According to Telegram Bot API: https://core.telegram.org/bots/api#html-style
- * Supports: <b>bold</b>, <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, <code>code</code>, <pre>pre</pre>
+ * Supports: <b>bold</b>, <i>italic</i>, <u>underline</u>, <s>strikethrough</s>, <code>code</code>, <pre>pre</pre>,
+ * <tg-spoiler>spoiler</tg-spoiler>
  */
 export function markdownToHtml(text: string): string {
   if (!text) return '';
@@ -87,6 +90,9 @@ export function markdownToHtml(text: string): string {
   // Convert ~~strikethrough~~ to <s>strikethrough</s>
   html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
 
+  // Convert ||spoiler|| to <tg-spoiler>spoiler</tg-spoiler>
+  html = replaceSpoilers(html, content => `<tg-spoiler>${content}</tg-spoiler>`);
+
   // Step 2: Escape HTML special characters (but preserve our tags)
   // Escape & first (but not already escaped entities)
   html = html.replace(/&(?!amp;|lt;|gt;|quot;|#\d+;)/g, '&amp;');
@@ -97,7 +103,7 @@ export function markdownToHtml(text: string): string {
   let placeholderIndex = 0;
 
   // Temporarily replace HTML tags with placeholders
-  html = html.replace(/<\/?(?:b|i|u|s|code|pre|a)\b[^>]*>/gi, match => {
+  html = html.replace(/<\/?(?:b|i|u|s|code|pre|a|tg-spoiler)\b[^>]*>/gi, match => {
     const placeholder = `__TAG_${placeholderIndex++}__`;
     tagPlaceholders[placeholder] = match;
     return placeholder;

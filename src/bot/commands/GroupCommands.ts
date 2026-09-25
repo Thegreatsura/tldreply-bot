@@ -6,6 +6,7 @@ import { markdownToHtml, splitMessage, escapeHtml } from '../../utils/formatter'
 import { config } from '../../config';
 import { parseTLDRArgs, parseTimeframe, isCountBased, parseCount } from '../../utils/tldrArgs';
 import { summaryErrorMessage } from '../../utils/userErrors';
+import { markSpoilers } from '../../utils/spoilers';
 
 export class GroupCommands extends BaseCommand {
   private rateLimitMap = new Map<string, number>();
@@ -702,10 +703,17 @@ export class GroupCommands extends BaseCommand {
       return;
     }
 
-    const content = message?.text || message?.caption || '';
-    if (!content || !message) {
+    const text: string = message?.text || message?.caption || '';
+    if (!text || !message) {
       return;
     }
+
+    // Spoiler formatting arrives as entities beside the text, not in it. Keep
+    // it as ||markers|| so summaries can hide the same details again.
+    const content = markSpoilers(
+      text.substring(0, config.messageMaxChars),
+      message.text ? message.entities : message.caption_entities
+    );
 
     try {
       // Improved identity detection
@@ -736,7 +744,7 @@ export class GroupCommands extends BaseCommand {
         userId: userId,
         username: username,
         firstName: firstName,
-        content: content.substring(0, config.messageMaxChars),
+        content,
         isBot: isBot,
         isChannel: isChannel,
       });

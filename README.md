@@ -10,6 +10,7 @@ A Telegram bot that summarizes group chat conversations using Google's Gemini AI
 - 📅 **Auto-Summarization**: Messages are automatically summarized before deletion (48 hours)
 - 📚 **Summary History**: Read archived summaries with `/history`, kept for 2 weeks
 - 🗄️ **Beyond Retention**: Long `/tldr` ranges are answered from the archive once the raw messages are gone
+- 🙈 **Spoiler-Aware**: Anything posted as a Telegram spoiler stays behind a spoiler in the summary
 - 🔒 **Per-Group API Keys**: Each group uses its own Gemini API key
 - 🔐 **Encrypted Storage**: API keys are encrypted at rest
 - ⚙️ **Customizable**: Customize summary style, filters, and scheduled summaries

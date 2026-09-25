@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickReportableError } from './gemini';
+import { GeminiService, SPOILER_INSTRUCTIONS, pickReportableError } from './gemini';
 
 const failure = (model: string, message: string) => ({ model, error: new Error(message) });
 
@@ -45,5 +45,54 @@ describe('pickReportableError', () => {
     const reported = pickReportableError([failure('gemini-a', '503 Service Unavailable')]);
 
     assert.match(reported!.message, /503/);
+  });
+});
+
+describe('spoiler instructions', () => {
+  /** A service whose model call records the prompt instead of sending it. */
+  function recordingService() {
+    const service = new GeminiService('test-key-never-sent-anywhere');
+    const prompts: string[] = [];
+    (service as any).generateContentWithFallback = async (prompt: string) => {
+      prompts.push(prompt);
+      return 'summary';
+    };
+    return { service, prompts };
+  }
+
+  const message = (content: string) => ({ username: 'alex', content, timestamp: '' });
+
+  test('are sent when a message has a spoiler', async () => {
+    const { service, prompts } = recordingService();
+    await service.summarizeMessages([message('the finale: ||the captain survives||')]);
+
+    assert.ok(prompts[0].includes(SPOILER_INSTRUCTIONS));
+  });
+
+  test('are left out when nothing is hidden', async () => {
+    const { service, prompts } = recordingService();
+    await service.summarizeMessages([message('see you at 9 || maybe 10')]);
+
+    assert.ok(!prompts[0].includes(SPOILER_INSTRUCTIONS));
+  });
+
+  test('apply to a group custom prompt too', async () => {
+    const { service, prompts } = recordingService();
+    await service.summarizeMessages([message('||he lives||')], { customPrompt: 'Be funny.' });
+
+    assert.ok(prompts[0].includes(SPOILER_INSTRUCTIONS));
+  });
+
+  test('are sent when merging an archived summary that kept a spoiler', async () => {
+    const { service, prompts } = recordingService();
+    const archive = {
+      summaryText: '* @alex shared the ending: ||he lives||',
+      periodStart: new Date('2026-09-20T00:00:00Z'),
+      periodEnd: new Date('2026-09-21T00:00:00Z'),
+      messageCount: 12,
+    };
+    await service.summarizeWithHistory([archive], []);
+
+    assert.ok(prompts[0].includes(SPOILER_INSTRUCTIONS));
   });
 });
