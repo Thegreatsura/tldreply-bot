@@ -7,6 +7,9 @@ import { config } from '../../config';
 import { parseTLDRArgs, parseTimeframe, isCountBased, parseCount } from '../../utils/tldrArgs';
 import { summaryErrorMessage } from '../../utils/userErrors';
 import { markSpoilers } from '../../utils/spoilers';
+import { linkMessageReferences } from '../../utils/messageLinks';
+import { editHtmlMessage, sendHtmlMessage } from '../../utils/telegram';
+import { SummaryMessage } from '../../services/gemini';
 
 export class GroupCommands extends BaseCommand {
   private rateLimitMap = new Map<string, number>();
@@ -102,6 +105,7 @@ export class GroupCommands extends BaseCommand {
       const parsedArgs = parseTLDRArgs(args.slice(1));
 
       loadingMsg = await ctx.reply('⏳ Generating summary...');
+      void ctx.replyWithChatAction('typing').catch(() => undefined);
 
       // Check if input is a count (pure number) or time-based (has h/d suffix or keywords)
       let messages: any[];
@@ -212,15 +216,7 @@ export class GroupCommands extends BaseCommand {
 
       const gemini = getGeminiService(chat.id, group.gemini_api_key_encrypted, this.encryption);
 
-      const formattedMessages = filteredMessages.map(msg => ({
-        username: msg.username,
-        firstName: msg.first_name,
-        content: msg.content,
-        timestamp: msg.timestamp,
-        isBot: msg.is_bot,
-        isChannel: msg.is_channel,
-        messageId: msg.message_id,
-      }));
+      const formattedMessages = this.toSummaryMessages(filteredMessages);
 
       const summaryOptions = {
         customPrompt: settings.custom_prompt,
@@ -228,6 +224,7 @@ export class GroupCommands extends BaseCommand {
         chatId: chat.id,
         chatUsername: chat.username,
         topicFocus: validatedTopic || undefined,
+        timezone: settings.schedule_timezone || 'UTC',
       };
 
       const summary =
@@ -248,12 +245,13 @@ export class GroupCommands extends BaseCommand {
         summaryLabel += `, ${archives.length} archived period${archives.length !== 1 ? 's' : ''}`;
       }
 
-      // Convert message ID references to markdown links
-      const summaryWithLinks = this.convertMessageIdsToLinks(
+      // Citations become links here, and only for ids that were actually
+      // summarized; archived periods carry their own links already.
+      const summaryWithLinks = linkMessageReferences(
         summary,
         chat.id,
         chat.username,
-        filteredMessages
+        this.knownIds(filteredMessages)
       );
 
       // Convert markdown to HTML
@@ -306,6 +304,7 @@ export class GroupCommands extends BaseCommand {
       const group = await this.db.getGroup(chat.id);
 
       loadingMsg = await ctx.reply('⏳ Generating summary...');
+      void ctx.replyWithChatAction('typing').catch(() => undefined);
 
       const messages = await this.db.getMessagesSinceMessageId(chat.id, fromMessageId, 10000);
       if (messages.length === 0) {
@@ -344,15 +343,7 @@ export class GroupCommands extends BaseCommand {
       // Use user-provided style if available, otherwise fall back to group setting
       const summaryStyle = parsedArgs.style || settings.summary_style;
 
-      const formattedMessages = filteredMessages.map(msg => ({
-        username: msg.username,
-        firstName: msg.first_name,
-        content: msg.content,
-        timestamp: msg.timestamp,
-        isBot: msg.is_bot,
-        isChannel: msg.is_channel,
-        messageId: msg.message_id,
-      }));
+      const formattedMessages = this.toSummaryMessages(filteredMessages);
 
       if (parsedArgs.topicRejectedReason) {
         await ctx.api.editMessageText(
@@ -374,14 +365,14 @@ export class GroupCommands extends BaseCommand {
         chatId: chat.id,
         chatUsername: chat.username,
         topicFocus: validatedTopic || undefined,
+        timezone: settings.schedule_timezone || 'UTC',
       });
 
-      // Convert message ID references to markdown links
-      const summaryWithLinks = this.convertMessageIdsToLinks(
+      const summaryWithLinks = linkMessageReferences(
         summary,
         chat.id,
         chat.username,
-        filteredMessages
+        this.knownIds(filteredMessages)
       );
 
       // Convert markdown to HTML
@@ -472,9 +463,9 @@ export class GroupCommands extends BaseCommand {
         const body = markdownToHtml(entry.summary_text);
 
         const chunks = splitMessage(body, 4096 - header.length - 100);
-        await ctx.reply(`${header}\n\n${chunks[0]}`, { parse_mode: 'HTML' });
+        await sendHtmlMessage(ctx.api, chat.id, `${header}\n\n${chunks[0]}`);
         for (let i = 1; i < chunks.length; i++) {
-          await ctx.reply(chunks[i], { parse_mode: 'HTML' });
+          await sendHtmlMessage(ctx.api, chat.id, chunks[i]);
         }
         return;
       }
@@ -565,7 +556,7 @@ export class GroupCommands extends BaseCommand {
         `ℹ️ <b>TLDR Info</b>\n\n` +
           `Status: ${status}\n` +
           `Bot: ${enabledStatus}\n\n` +
-          `🔒 Messages auto-delete after 48 hours\n\n` +
+          `🔒 Messages auto-delete after ${config.messageRetentionHours} hours\n\n` +
           `<i>Use /tldr_help for usage guide or reply to a message with /tldr</i>`,
         { parse_mode: 'HTML' }
       );
@@ -738,6 +729,11 @@ export class GroupCommands extends BaseCommand {
         }
       }
 
+      // Telegram's own send time, not the time the update reached us: after
+      // downtime, queued updates arrive in a burst and would all be stamped
+      // with the same wrong minute.
+      const sentAt = typeof message.date === 'number' ? new Date(message.date * 1000) : undefined;
+
       await this.db.insertMessage({
         chatId: chat.id,
         messageId: message.message_id,
@@ -747,6 +743,7 @@ export class GroupCommands extends BaseCommand {
         content,
         isBot: isBot,
         isChannel: isChannel,
+        timestamp: sentAt,
       });
     } catch (error) {
       logger.error('Error caching message:', error);
@@ -777,61 +774,22 @@ export class GroupCommands extends BaseCommand {
     });
   }
 
-  /**
-   * Converts message ID references to consistent format: number (link)
-   * Handles both single [51364] and multiple [52343, 43242, 34234] formats
-   */
-  private convertMessageIdsToLinks(
-    summary: string,
-    chatId: number,
-    chatUsername: string | undefined,
-    messages: any[]
-  ): string {
-    let result = summary;
-
-    // First, convert existing markdown links [number](link) to number (link) format
-    result = result.replace(/\[(\d+)\]\((https?:\/\/[^\s)]+)\)/g, (match, messageIdStr, link) => {
-      return `${messageIdStr} (${link})`;
-    });
-
-    // Handle multiple message IDs in brackets: [52343, 43242, 34234]
-    result = result.replace(/\[(\d+(?:\s*,\s*\d+)+)\]/g, (match, idsStr) => {
-      const ids = idsStr
-        .split(',')
-        .map((id: string) => id.trim())
-        .filter((id: string) => /^\d+$/.test(id));
-      const formattedIds = ids.map((id: string) => {
-        const messageId = parseInt(id, 10);
-        const link = this.formatTelegramLink(chatId, messageId, chatUsername);
-        return `${messageId} (${link})`;
-      });
-      // Wrap in brackets to show they're links
-      return `[${formattedIds.join(', ')}]`;
-    });
-
-    // Convert single message ID references [51364] that are not already converted
-    // Pattern: [ followed by digits, followed by ] that is NOT followed by (
-    result = result.replace(/\[(\d+)\](?!\()/g, (match, messageIdStr) => {
-      const messageId = parseInt(messageIdStr, 10);
-      const link = this.formatTelegramLink(chatId, messageId, chatUsername);
-      // Use consistent format: number (link)
-      return `${messageId} (${link})`;
-    });
-
-    return result;
+  /** Database rows in the shape the summarizer takes. */
+  private toSummaryMessages(rows: any[]): SummaryMessage[] {
+    return rows.map(msg => ({
+      username: msg.username,
+      firstName: msg.first_name,
+      content: msg.content,
+      timestamp: msg.timestamp,
+      isBot: msg.is_bot,
+      isChannel: msg.is_channel,
+      messageId: msg.message_id,
+    }));
   }
 
-  /**
-   * Formats a Telegram link for a message
-   */
-  private formatTelegramLink(chatId: number, messageId: number, chatUsername?: string): string {
-    if (chatUsername) {
-      return `https://t.me/${chatUsername}/${messageId}`;
-    }
-    // For private groups/channels, use the c/ID format
-    // Telegram IDs usually look like -100123456789. We need the part after -100
-    const cleanId = Math.abs(chatId).toString().replace(/^100/, '');
-    return `https://t.me/c/${cleanId}/${messageId}`;
+  /** The ids a summary may legitimately cite. */
+  private knownIds(rows: any[]): Set<number> {
+    return new Set(rows.map(msg => Number(msg.message_id)));
   }
 
   private async sendSummaryMessage(
@@ -848,9 +806,7 @@ export class GroupCommands extends BaseCommand {
 
     if (summary.length <= maxSummaryLength) {
       try {
-        await ctx.api.editMessageText(chatId, loadingMsgId, `${header}\n\n${summary}`, {
-          parse_mode: 'HTML',
-        });
+        await editHtmlMessage(ctx.api, chatId, loadingMsgId, `${header}\n\n${summary}`);
         return;
       } catch (error: any) {
         if (!error.message?.includes('MESSAGE_TOO_LONG')) {
@@ -862,24 +818,26 @@ export class GroupCommands extends BaseCommand {
     const chunks = splitMessage(summary, maxSummaryLength);
 
     try {
-      await ctx.api.editMessageText(
+      await editHtmlMessage(
+        ctx.api,
         chatId,
         loadingMsgId,
-        `${header} (1/${chunks.length})\n\n${chunks[0]}`,
-        { parse_mode: 'HTML' }
+        `${header} (1/${chunks.length})\n\n${chunks[0]}`
       );
     } catch (error: any) {
       if (error.message?.includes('MESSAGE_TOO_LONG')) {
-        await ctx.api.editMessageText(chatId, loadingMsgId, chunks[0], { parse_mode: 'HTML' });
+        await editHtmlMessage(ctx.api, chatId, loadingMsgId, chunks[0]);
       } else {
         throw error;
       }
     }
 
     for (let i = 1; i < chunks.length; i++) {
-      await ctx.reply(`${header} (${i + 1}/${chunks.length})\n\n${chunks[i]}`, {
-        parse_mode: 'HTML',
-      });
+      await sendHtmlMessage(
+        ctx.api,
+        chatId,
+        `${header} (${i + 1}/${chunks.length})\n\n${chunks[i]}`
+      );
     }
   }
 }

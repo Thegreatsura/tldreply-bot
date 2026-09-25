@@ -60,17 +60,14 @@ ENCRYPTION_SECRET=your_random_secret_min_32_chars
 | `MESSAGE_MAX_CHARS` | `2000` | Stored characters per message — the biggest lever on database size. |
 | `DATABASE_SOFT_LIMIT_MB` | `500` | Your plan's size cap. Retention halves past 85% of it. |
 | `GEMINI_MODELS` | flash models | Models to try, in order. |
+| `GEMINI_TIMEOUT_MS` | `90000` | Per-request timeout for Gemini. |
+| `UPDATE_CONCURRENCY` | `50` | How many chats are served at once. Updates within a chat stay in order. |
 | `PORT` | unset | When set, serves an HTTP health endpoint. Needed only if your host health checks over HTTP. |
 | `LOG_TO_FILE` | `false` | Write rotating log files. Only useful with persistent disk. |
 | `MAINTENANCE_MODE` | `false` | Start but do not poll or run jobs. For database work on hosts with no stop button. |
 
-6. Set up the database:
-```bash
-# Connect to your PostgreSQL database and run:
-psql $DATABASE_URL < src/db/schema.sql
-```
-
-7. Run the bot:
+6. Run the bot. The schema in `src/db/schema.sql` is applied automatically on
+   every start; it is safe to re-run, and migrations guard themselves.
 ```bash
 # Development
 npm run dev
@@ -228,6 +225,12 @@ The bot only stores messages it receives after being added to a group. It cannot
    - `NODE_ENV` - Set to `production`
 6. Bot will auto-deploy!
 
+> The first start after upgrading migrates the timestamp columns to
+> `TIMESTAMPTZ`. Existing values are reinterpreted as UTC, which is correct on
+> any host whose Postgres session time zone is UTC (the managed-provider
+> default). If yours is not, run the migration by hand with the right zone
+> before starting the new build.
+
 **Free hosting stack:**
 - Supabase (free PostgreSQL tier)
 - Google Gemini (free AI tier)
@@ -327,7 +330,8 @@ and shortens its retention window when usage passes 85% of the soft limit.
 - **Database**: PostgreSQL
 - **Encryption**: AES-256-GCM with PBKDF2 key derivation
 - **Tests**: `node:test` (no test framework dependency)
-- **Runtime**: a single long-lived process (long polling + timer-driven jobs)
+- **Runtime**: a single long-lived process (long polling via `@grammyjs/runner`, updates
+  handled concurrently across chats and in order within one, plus timer-driven jobs)
 
 ## Security
 
@@ -342,6 +346,11 @@ and shortens its retention window when usage passes 85% of the soft limit.
   - SQL commands in messages are never executed
   - Example: A message like `"'; DROP TABLE messages; --"` will be stored as text, not executed
 - **Input Validation**: Timeframe inputs are validated and limited (max 7 days)
+- **Prompt injection**: instructions go to the model as its system instruction; the chat
+  goes in the user turn as a fenced transcript whose closing fence is neutralised and
+  whose continuation lines are indented, so nothing a member types can pose as a rule
+  or as another member's message. Message links are built in code from ids known to
+  exist, never taken from the model or the chat
 - **Rate Limiting**: Commands are rate-limited to prevent abuse
 - **Admin-only settings**: Every settings button re-verifies admin status, not just the
   command that opened the menu

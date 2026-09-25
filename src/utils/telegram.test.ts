@@ -1,7 +1,14 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Api } from 'grammy';
-import { deleteSecretMessage, secretDeletionNotice, warnIfSecretRemains } from './telegram';
+import {
+  deleteSecretMessage,
+  editHtmlMessage,
+  isHtmlParseError,
+  secretDeletionNotice,
+  sendHtmlMessage,
+  warnIfSecretRemains,
+} from './telegram';
 
 /** Minimal stand-in for grammy's Api, recording what was called. */
 function fakeApi(opts: { deleteThrows?: boolean; sendThrows?: boolean } = {}) {
@@ -67,5 +74,63 @@ describe('secretDeletionNotice', () => {
   test('reassures only on success', () => {
     assert.match(secretDeletionNotice(true), /deleted from this chat/);
     assert.equal(secretDeletionNotice(false), '', 'failure is reported separately');
+  });
+});
+
+describe('HTML fallback', () => {
+  /** An Api whose HTML sends fail the way Telegram fails on bad markup. */
+  function parseFailingApi() {
+    const sent: Array<{ text: string; parseMode?: string }> = [];
+    const api = {
+      sendMessage: async (_chatId: number, text: string, extra?: { parse_mode?: string }) => {
+        if (extra?.parse_mode === 'HTML') {
+          throw new Error('Bad Request: can\'t parse entities: Unsupported start tag "x"');
+        }
+        sent.push({ text, parseMode: extra?.parse_mode });
+        return {} as never;
+      },
+      editMessageText: async (
+        _chatId: number,
+        _messageId: number,
+        text: string,
+        extra?: { parse_mode?: string }
+      ) => {
+        if (extra?.parse_mode === 'HTML') throw new Error("can't parse entities");
+        sent.push({ text, parseMode: extra?.parse_mode });
+        return {} as never;
+      },
+    } as unknown as Api;
+    return { api, sent };
+  }
+
+  test('recognises Telegram parse errors only', () => {
+    assert.equal(isHtmlParseError(new Error("Bad Request: can't parse entities")), true);
+    assert.equal(isHtmlParseError(new Error('Bad Request: message is too long')), false);
+  });
+
+  // Regression: a summary Telegram could not parse used to be lost entirely.
+  test('resends as plain text when the HTML is rejected', async () => {
+    const { api, sent } = parseFailingApi();
+    await sendHtmlMessage(api, 1, '<b>Title</b> &amp; <x>');
+
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].text, 'Title & ');
+    assert.equal(sent[0].parseMode, undefined);
+  });
+
+  test('applies the same fallback to edits', async () => {
+    const { api, sent } = parseFailingApi();
+    await editHtmlMessage(api, 1, 2, '<i>hi</i>');
+
+    assert.deepEqual(sent, [{ text: 'hi', parseMode: undefined }]);
+  });
+
+  test('rethrows anything that is not a parse error', async () => {
+    const api = {
+      sendMessage: async () => {
+        throw new Error('Forbidden: bot was kicked');
+      },
+    } as unknown as Api;
+    await assert.rejects(() => sendHtmlMessage(api, 1, 'x'), /kicked/);
   });
 });

@@ -57,6 +57,22 @@ export const config = {
   databasePressureRatio: 0.85,
 
   /**
+   * Per-request timeout for Gemini calls, in milliseconds.
+   *
+   * Without one a stalled connection waits forever, and the group that typed
+   * /tldr watches "Generating summary..." until the process restarts. Long
+   * enough for a 900-message chunk on a flash model, short enough to fail
+   * visibly.
+   */
+  geminiTimeoutMs: intFromEnv('GEMINI_TIMEOUT_MS', 90_000, 5_000, 600_000),
+
+  /**
+   * Upper bound on updates handled at the same time. Updates from one chat are
+   * always processed in order; this caps how many chats are served at once.
+   */
+  updateConcurrency: intFromEnv('UPDATE_CONCURRENCY', 50, 1, 500),
+
+  /**
    * Models tried in order, first match wins.
    *
    * Kept short deliberately: every entry is a round trip when the one before

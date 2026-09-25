@@ -15,6 +15,7 @@ export type ErrorKind =
   | 'modelUnavailable'
   | 'timeout'
   | 'network'
+  | 'blocked'
   | 'unknown';
 
 const PATTERNS: Array<[ErrorKind, RegExp]> = [
@@ -25,7 +26,8 @@ const PATTERNS: Array<[ErrorKind, RegExp]> = [
     'modelUnavailable',
     /NOT_FOUND|\b404\b|no longer available|none of the configured gemini models|no gemini models are configured/i,
   ],
-  ['timeout', /timeout|timed out|ETIMEDOUT/i],
+  ['blocked', /blocked the request|stopped early|SAFETY|PROHIBITED_CONTENT|BLOCKLIST/i],
+  ['timeout', /timeout|timed out|ETIMEDOUT|deadline/i],
   ['network', /network|ECONNREFUSED|ENOTFOUND|fetch failed/i],
 ];
 
@@ -53,6 +55,8 @@ export function summaryErrorMessage(error: unknown): string {
       return '❌ That took too long to summarise. Try a shorter range, like /tldr 6h.';
     case 'network':
       return "❌ I couldn't reach Gemini just now. Please try again in a moment.";
+    case 'blocked':
+      return '❌ Gemini refused to summarise that range because of its content filters. Try a narrower range, or a topic, so the flagged part is left out.';
     default:
       return '❌ Something went wrong making that summary. Please try again in a moment.';
   }

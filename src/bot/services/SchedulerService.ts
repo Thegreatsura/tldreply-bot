@@ -4,7 +4,13 @@ import { EncryptionService } from '../../utils/encryption';
 import { getGeminiService } from '../../services/geminiPool';
 import { logger } from '../../utils/logger';
 import { markdownToHtml, splitMessage } from '../../utils/formatter';
+import { linkMessageReferences } from '../../utils/messageLinks';
+import { sendHtmlMessage } from '../../utils/telegram';
 import { MyContext } from '../commands/BaseCommand';
+import { isScheduleDue } from './schedule';
+
+/** Same ceiling as /tldr, so a busy group's daily summary covers the whole day. */
+const MAX_SCHEDULED_MESSAGES = 10000;
 
 export class SchedulerService {
   private bot: Bot<MyContext>;
@@ -17,10 +23,16 @@ export class SchedulerService {
     this.encryption = encryption;
   }
 
-  async checkAndRunScheduledSummaries(): Promise<void> {
+  /**
+   * Fires every schedule whose slot has passed since its last run.
+   *
+   * Safe to call as often as wanted: the due check is against the schedule's
+   * last run, not against the current minute, so the interval it runs on only
+   * bounds how late a summary can be.
+   */
+  async checkAndRunScheduledSummaries(now: Date = new Date()): Promise<void> {
     try {
       const groupsWithSchedules = await this.db.getGroupsWithScheduledSummaries();
-      const now = new Date();
 
       for (const settings of groupsWithSchedules) {
         try {
@@ -29,82 +41,24 @@ export class SchedulerService {
             continue;
           }
 
-          // Evaluate current time in the group's timezone
-          let currentHour: number;
-          let currentMinute: number;
-          let currentDay: number;
+          const due = isScheduleDue(
+            {
+              scheduledEnabled: Boolean(settings.scheduled_enabled),
+              frequency: settings.schedule_frequency || 'daily',
+              time: settings.schedule_time || '09:00:00',
+              timezone: settings.schedule_timezone || 'UTC',
+              lastRun: settings.last_scheduled_summary
+                ? new Date(settings.last_scheduled_summary)
+                : null,
+            },
+            now
+          );
+          if (!due) continue;
 
-          try {
-            const tz = settings.schedule_timezone || 'UTC';
-            const formatter = new Intl.DateTimeFormat('en-US', {
-              timeZone: tz,
-              hour: 'numeric',
-              minute: 'numeric',
-              hour12: false,
-            });
-
-            const parts = formatter.formatToParts(now);
-            const getPart = (type: string) => parts.find(p => p.type === type)?.value;
-
-            currentHour = parseInt(getPart('hour') || '0', 10);
-            currentMinute = parseInt(getPart('minute') || '0', 10);
-            // Intl weekday is 1-7 (Mon-Sun) or something else? actually en-US usually 0-6 but check.
-            // Day calculation: Sun=0, Mon=1...
-            const dayFormatter = new Intl.DateTimeFormat('en-US', {
-              timeZone: tz,
-              weekday: 'short',
-            });
-            const dayName = dayFormatter.format(now);
-            const days: { [key: string]: number } = {
-              Sun: 0,
-              Mon: 1,
-              Tue: 2,
-              Wed: 3,
-              Thu: 4,
-              Fri: 5,
-              Sat: 6,
-            };
-            currentDay = days[dayName] ?? now.getUTCDay();
-          } catch (e) {
-            // Fallback to UTC if timezone is invalid
-            currentHour = now.getUTCHours();
-            currentMinute = now.getUTCMinutes();
-            currentDay = now.getUTCDay();
-          }
-
-          // Parse schedule time
-          const [scheduleHour, scheduleMinute] = (settings.schedule_time || '09:00:00')
-            .split(':')
-            .map(Number);
-
-          // Check if it's time to run
-          const isTimeToRun =
-            currentHour === scheduleHour &&
-            currentMinute >= scheduleMinute &&
-            currentMinute < scheduleMinute + 5;
-
-          if (!isTimeToRun) continue;
-
-          // Check frequency
-          if (settings.schedule_frequency === 'weekly') {
-            // Run weekly summaries on Sunday (day 0) at the scheduled time
-            if (currentDay !== 0) continue;
-          }
-
-          // Check if we already ran today
-          if (settings.last_scheduled_summary) {
-            const lastRun = new Date(settings.last_scheduled_summary);
-            const hoursSinceLastRun = (now.getTime() - lastRun.getTime()) / (1000 * 60 * 60);
-            if (hoursSinceLastRun < 23) {
-              continue;
-            }
-          }
-
-          // Generate summary
-          await this.generateScheduledSummary(settings.telegram_chat_id, settings);
-
-          // Update last run time
+          // Recorded before generating: a failing summary should not be
+          // retried every few minutes for the rest of the grace window.
           await this.db.updateLastScheduledSummary(settings.telegram_chat_id);
+          await this.generateScheduledSummary(settings.telegram_chat_id, settings);
         } catch (error) {
           logger.error(
             `Error processing scheduled summary for group ${settings.telegram_chat_id}:`,
@@ -127,7 +81,11 @@ export class SchedulerService {
       const hoursAgo = settings.schedule_frequency === 'weekly' ? 168 : 24; // 7 days or 1 day
       const since = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
 
-      const messages = await this.db.getMessagesSinceTimestamp(chatId, since, 1000);
+      const messages = await this.db.getMessagesSinceTimestamp(
+        chatId,
+        since,
+        MAX_SCHEDULED_MESSAGES
+      );
       if (messages.length === 0) {
         return; // No messages to summarize
       }
@@ -163,26 +121,28 @@ export class SchedulerService {
         summaryStyle: settings.summary_style,
         chatId: chatId,
         chatUsername: group.username,
+        timezone: settings.schedule_timezone || 'UTC',
       });
 
-      // Convert markdown to HTML
-      const formattedSummary = markdownToHtml(summary);
+      const linked = linkMessageReferences(
+        summary,
+        chatId,
+        group.username,
+        new Set(filteredMessages.map(msg => Number(msg.message_id)))
+      );
+      const formattedSummary = markdownToHtml(linked);
 
       const frequencyText = settings.schedule_frequency === 'weekly' ? 'Weekly' : 'Daily';
       const header = `📅 <b>${frequencyText} Scheduled Summary</b>`;
 
       const MAX_LENGTH = 4000;
       if (formattedSummary.length <= MAX_LENGTH) {
-        await this.bot.api.sendMessage(chatId, `${header}\n\n${formattedSummary}`, {
-          parse_mode: 'HTML',
-        });
+        await sendHtmlMessage(this.bot.api, chatId, `${header}\n\n${formattedSummary}`);
       } else {
         const chunks = splitMessage(formattedSummary, MAX_LENGTH);
         for (let i = 0; i < chunks.length; i++) {
           const chunkHeader = `${header} (${i + 1}/${chunks.length})`;
-          await this.bot.api.sendMessage(chatId, `${chunkHeader}\n\n${chunks[i]}`, {
-            parse_mode: 'HTML',
-          });
+          await sendHtmlMessage(this.bot.api, chatId, `${chunkHeader}\n\n${chunks[i]}`);
         }
       }
     } catch (error) {

@@ -124,6 +124,23 @@ export function markdownToHtml(text: string): string {
 }
 
 /**
+ * Reduces a Telegram HTML message to plain text.
+ *
+ * The fallback for when Telegram rejects the HTML: tags are dropped and the
+ * entities they required are unescaped, so the reader gets the words without
+ * the formatting rather than an error message.
+ */
+export function stripHtmlTags(html: string): string {
+  return html
+    .replace(/<\/?[a-zA-Z][^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
  * Split a long message into chunks that fit within Telegram's message length limit
  * Tries to split at paragraph boundaries (double newlines) when possible
  */

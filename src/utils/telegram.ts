@@ -1,5 +1,6 @@
 import { Api } from 'grammy';
 import { logger } from './logger';
+import { stripHtmlTags } from './formatter';
 
 /**
  * Deletes a message that contained a secret, best-effort.
@@ -74,5 +75,51 @@ export async function warnIfSecretRemains(
       chatId,
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+/** True when Telegram rejected a message because its HTML did not parse. */
+export function isHtmlParseError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /can't parse entities|can't find end of the entity|unsupported start tag/i.test(message);
+}
+
+/**
+ * Sends an HTML message, falling back to plain text if Telegram cannot parse it.
+ *
+ * Summaries are model output run through a regex markdown converter, and the
+ * combination sometimes produces HTML Telegram rejects. Without this fallback
+ * the whole summary was lost behind "Something went wrong"; with it the reader
+ * gets the text minus the formatting.
+ */
+export async function sendHtmlMessage(
+  api: Api,
+  chatId: number,
+  html: string,
+  extra: Record<string, unknown> = {}
+) {
+  try {
+    return await api.sendMessage(chatId, html, { ...extra, parse_mode: 'HTML' });
+  } catch (error) {
+    if (!isHtmlParseError(error)) throw error;
+    logger.warn('Telegram rejected summary HTML; sending as plain text', { chatId });
+    return await api.sendMessage(chatId, stripHtmlTags(html), extra);
+  }
+}
+
+/** Same fallback for editing a message in place. */
+export async function editHtmlMessage(
+  api: Api,
+  chatId: number,
+  messageId: number,
+  html: string,
+  extra: Record<string, unknown> = {}
+) {
+  try {
+    return await api.editMessageText(chatId, messageId, html, { ...extra, parse_mode: 'HTML' });
+  } catch (error) {
+    if (!isHtmlParseError(error)) throw error;
+    logger.warn('Telegram rejected summary HTML; editing as plain text', { chatId });
+    return await api.editMessageText(chatId, messageId, stripHtmlTags(html), extra);
   }
 }

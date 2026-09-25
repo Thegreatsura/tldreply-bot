@@ -17,6 +17,22 @@ export class GroupRepository extends BaseRepository {
     invalidateGroupCache(chatId);
   }
 
+  /**
+   * Hands a configured group to another admin.
+   *
+   * setup_by_user_id decides whose /list_groups a group appears in. When the
+   * admin who set it up leaves, nobody could manage the key short of kicking
+   * the bot and starting over.
+   */
+  async claimGroup(chatId: number, userId: number): Promise<void> {
+    await this.db.query(
+      `UPDATE groups SET setup_by_user_id = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE telegram_chat_id = $2`,
+      [userId, chatId]
+    );
+    invalidateGroupCache(chatId);
+  }
+
   async getGroup(chatId: number): Promise<any> {
     const cached = groupCache.getGroup(chatId);
     if (cached !== undefined) return cached ?? undefined;

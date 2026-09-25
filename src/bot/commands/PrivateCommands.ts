@@ -5,6 +5,7 @@ import { GeminiService } from '../../services/gemini';
 import { invalidateGeminiService } from '../../services/geminiPool';
 import { logger } from '../../utils/logger';
 import { escapeHtml } from '../../utils/formatter';
+import { config } from '../../config';
 import { apiKeyErrorMessage, classifyError } from '../../utils/userErrors';
 import {
   deleteSecretMessage,
@@ -94,7 +95,7 @@ export class PrivateCommands extends BaseCommand {
       await ctx.reply(
         `👋 Welcome to TLDR Bot!\n\n` +
           `This bot helps summarize Telegram group chats using Google's Gemini AI.\n\n` +
-          `🔒 <b>Privacy:</b> Messages are cached for up to 48 hours and automatically deleted.\n\n` +
+          `🔒 <b>Privacy:</b> Messages are cached for up to ${config.messageRetentionHours} hours and automatically deleted.\n\n` +
           `<i>Use the buttons below or type commands to get started!</i>\n\n` +
           `<b>💡 Tip:</b> You can run /setup directly in your group to start setup!`,
         {
@@ -472,18 +473,17 @@ export class PrivateCommands extends BaseCommand {
           return;
         }
 
-        const group = groups.find(g => g.telegram_chat_id === chatId);
-        if (!group) {
+        // The group need not be one this user set up: any current admin of
+        // it may remove it, but for them the admin check must succeed.
+        const ownGroup = groups.find(g => g.telegram_chat_id === chatId);
+        if (!ownGroup && !(await this.db.getGroup(chatId))) {
           await ctx.reply(
-            "❌ Group not found or you don't have permission to remove it.\n\n" +
-              'Run `/list_groups` to see your groups.',
-            { parse_mode: 'HTML' }
+            '❌ Group not found.\n\nRun /list_groups to see your groups, or check the chat ID.'
           );
           return;
         }
 
         try {
-          const chatInfo = await ctx.api.getChat(chatId);
           const isAdmin = await this.isAdminOrCreator(ctx, chatId, chat.id);
           if (!isAdmin) {
             await ctx.reply(
@@ -493,6 +493,10 @@ export class PrivateCommands extends BaseCommand {
             return;
           }
         } catch (error) {
+          if (!ownGroup) {
+            await ctx.reply('❌ Could not verify that you are an admin of that group.');
+            return;
+          }
           logger.warn('Could not verify group access, proceeding with removal:', { error });
         }
 
@@ -640,15 +644,17 @@ export class PrivateCommands extends BaseCommand {
       const allGroups = await this.db.listGroupsForUser(chat.id);
       const configuredGroups = allGroups.filter(g => g.gemini_api_key_encrypted);
 
-      if (configuredGroups.length === 0) {
+      const args = ctx.message?.text?.split(' ') || [];
+      if (args.length < 2 && configuredGroups.length === 0) {
         await ctx.reply(
           '📭 You have no configured groups to update.\n\n' +
-            'Use /setup_group or /setup to configure a group first.'
+            'Use /setup_group or /setup to configure a group first, or pass the chat ID of a ' +
+            'group you administer: <code>/update_api_key &lt;chat_id&gt;</code>',
+          { parse_mode: 'HTML' }
         );
         return;
       }
 
-      const args = ctx.message?.text?.split(' ') || [];
       if (args.length >= 2) {
         const groupIdInput = args[1].replace('@', '');
         const chatId = parseInt(groupIdInput, 10);
@@ -666,21 +672,21 @@ export class PrivateCommands extends BaseCommand {
           return;
         }
 
-        const group = configuredGroups.find(g => g.telegram_chat_id === chatId);
+        // Any current admin of the group may update its key, not only the
+        // one who set it up; the admin check below is what authorizes them.
+        const group = await this.db.getGroup(chatId);
         if (!group) {
-          const groupExists = allGroups.find(g => g.telegram_chat_id === chatId);
-          if (groupExists) {
-            await ctx.reply(
-              '❌ Group found but not configured with an API key.\n\n' +
-                'Please complete the setup first using /setup_group or /setup.',
-              { parse_mode: 'HTML' }
-            );
-          } else {
-            await ctx.reply(
-              '❌ Group not found.\n\n' + 'Run `/list_groups` to see your configured groups.',
-              { parse_mode: 'HTML' }
-            );
-          }
+          await ctx.reply(
+            '❌ Group not found.\n\nRun /list_groups to see your configured groups, or check the chat ID.'
+          );
+          return;
+        }
+        if (!group.gemini_api_key_encrypted) {
+          await ctx.reply(
+            '❌ Group found but not configured with an API key.\n\n' +
+              'Please complete the setup first using /setup_group or /setup.',
+            { parse_mode: 'HTML' }
+          );
           return;
         }
 
@@ -889,17 +895,6 @@ export class PrivateCommands extends BaseCommand {
         await ctx.editMessageText(
           '❌ Group not found in database.\n\n' +
             'The group may not be set up yet. Run /setup in the group or /setup_group in private chat.'
-        );
-        return;
-      }
-
-      const setupUserId = groupFromDb.setup_by_user_id
-        ? Number(groupFromDb.setup_by_user_id)
-        : null;
-      if (setupUserId !== userId) {
-        await ctx.editMessageText(
-          '❌ You are not authorized to update this group.\n\n' +
-            'Only the user who set up the group can update its API key.'
         );
         return;
       }

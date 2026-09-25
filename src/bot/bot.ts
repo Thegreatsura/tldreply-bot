@@ -1,4 +1,5 @@
 import { Bot, GrammyError, HttpError, Context } from 'grammy';
+import { run, sequentialize, RunnerHandle } from '@grammyjs/runner';
 import { conversations, createConversation, ConversationFlavor } from '@grammyjs/conversations';
 import { Database } from '../db/database';
 import { EncryptionService } from '../utils/encryption';
@@ -22,6 +23,12 @@ type MyContext = ConversationFlavor<Context>;
 /** How often to summarize-and-purge messages past the retention window. */
 const CLEANUP_INTERVAL_HOURS = 6;
 
+/**
+ * How often due schedules are checked. The check is idempotent (see
+ * services/schedule.ts), so this only bounds how late a summary can post.
+ */
+const SCHEDULE_CHECK_MINUTES = 5;
+
 export class TLDRBot {
   private bot: Bot<MyContext>;
   private db: Database;
@@ -30,7 +37,7 @@ export class TLDRBot {
   private schedulerService: SchedulerService;
 
   private timers: NodeJS.Timeout[] = [];
-  private pollingPromise: Promise<void> | null = null;
+  private runner: RunnerHandle | null = null;
   private stopping = false;
   private maintenanceHeartbeat: NodeJS.Timeout | null = null;
 
@@ -42,6 +49,17 @@ export class TLDRBot {
     setServices(db, encryption);
 
     this.bot = new Bot<MyContext>(telegramToken);
+
+    // Updates are processed concurrently across chats (see start()), but each
+    // chat's updates stay in order: conversations depend on that, and so does
+    // "reply to a message, then /tldr". Private chats key by their chat id too,
+    // which is the user id, so an admin's setup conversation is ordered.
+    this.bot.use(
+      sequentialize(ctx => {
+        const chat = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat.id;
+        return chat !== undefined ? String(chat) : undefined;
+      })
+    );
 
     // Add conversations plugin
     this.bot.use(conversations());
@@ -117,43 +135,36 @@ export class TLDRBot {
 
     logger.info('🔄 Starting bot connection...');
 
-    // Background jobs are registered BEFORE polling starts. `bot.start()` runs the
-    // long-polling loop and its promise only settles once the bot stops, so anything
-    // sequenced after an `await` on it would never execute while the bot is alive.
+    // Resolves bot identity and fails fast on a bad token.
+    await this.bot.init();
+
+    // Background jobs are registered before polling starts so a job that
+    // fires on startup does not race the first batch of updates.
     this.startBackgroundJobs();
 
-    return new Promise<void>((resolve, reject) => {
-      let started = false;
+    // The runner handles updates concurrently, up to the configured limit,
+    // instead of one at a time. With the built-in poller, one group's slow
+    // Gemini call held up message caching for every other group.
+    this.runner = run(this.bot, { sink: { concurrency: config.updateConcurrency } });
 
-      this.pollingPromise = this.bot.start({
-        onStart: info => {
-          started = true;
-          logger.info(`✅ Bot is running as @${info.username}`);
-          resolve();
-        },
-      });
+    logger.info(`✅ Bot is running as @${this.bot.botInfo.username}`);
 
-      this.pollingPromise.then(
-        () => {
-          // Resolves when polling stops. Expected during shutdown, fatal otherwise.
-          if (!this.stopping) {
-            logger.error('❌ Long polling stopped unexpectedly');
-            this.stopBackgroundJobs();
-          }
-        },
-        error => {
-          logger.error('❌ Long polling failed:', error);
+    // Resolves when polling stops. Expected during shutdown, fatal otherwise:
+    // exit so the process manager restarts us.
+    this.runner.task()?.then(
+      () => {
+        if (!this.stopping) {
+          logger.error('❌ Long polling stopped unexpectedly');
           this.stopBackgroundJobs();
-          if (started) {
-            // Already reported success to the caller; nothing left to reject.
-            // Exit so the process manager restarts us.
-            process.exit(1);
-          } else {
-            reject(error);
-          }
+          process.exit(1);
         }
-      );
-    });
+      },
+      error => {
+        logger.error('❌ Long polling failed:', error);
+        this.stopBackgroundJobs();
+        process.exit(1);
+      }
+    );
   }
 
   /**
@@ -173,7 +184,7 @@ export class TLDRBot {
     );
 
     // Fire due scheduled summaries.
-    this.every(HOUR, 'scheduled summaries', () =>
+    this.every(SCHEDULE_CHECK_MINUTES * 60 * 1000, 'scheduled summaries', () =>
       this.schedulerService.checkAndRunScheduledSummaries()
     );
 
@@ -189,7 +200,7 @@ export class TLDRBot {
     this.after(2 * 60 * 1000, 'initial message cleanup', () =>
       this.cleanupService.summarizeAndCleanupOldMessages()
     );
-    this.after(5 * 60 * 1000, 'initial scheduled summary check', () =>
+    this.after(30 * 1000, 'initial scheduled summary check', () =>
       this.schedulerService.checkAndRunScheduledSummaries()
     );
     this.after(10 * 60 * 1000, 'initial group cleanup', () =>
@@ -237,14 +248,11 @@ export class TLDRBot {
     this.stopBackgroundJobs();
     clearGeminiPool();
 
-    // Nothing to stop if polling never started.
-    if (!config.maintenanceMode) {
-      await this.bot.stop();
-    }
-
-    // Let in-flight middleware finish before the caller closes the database.
-    if (this.pollingPromise) {
-      await this.pollingPromise.catch(() => undefined);
+    // Resolves once in-flight middleware has finished, so the caller can
+    // safely close the database afterwards.
+    if (this.runner) {
+      await this.runner.stop();
+      this.runner = null;
     }
 
     logger.info('⏹️ Bot stopped');

@@ -11,10 +11,12 @@ export class MessageRepository extends BaseRepository {
     content: string;
     isBot?: boolean;
     isChannel?: boolean;
+    /** Telegram's send time. Falls back to now. Never changed by an edit. */
+    timestamp?: Date;
   }): Promise<void> {
     await this.db.query(
-      `INSERT INTO messages (telegram_chat_id, message_id, user_id, username, first_name, content, is_bot, is_channel)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO messages (telegram_chat_id, message_id, user_id, username, first_name, content, is_bot, is_channel, timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, CURRENT_TIMESTAMP))
        ON CONFLICT (telegram_chat_id, message_id)
        DO UPDATE SET
          content = EXCLUDED.content,
@@ -32,6 +34,7 @@ export class MessageRepository extends BaseRepository {
         data.content,
         data.isBot || false,
         data.isChannel || false,
+        data.timestamp ?? null,
       ]
     );
   }

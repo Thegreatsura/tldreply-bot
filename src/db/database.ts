@@ -1,4 +1,6 @@
 import { Pool, PoolClient } from 'pg';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 import { logger } from '../utils/logger';
 import { GroupRepository } from './repositories/GroupRepository';
 import { MessageRepository } from './repositories/MessageRepository';
@@ -51,6 +53,24 @@ export class Database {
 
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  /**
+   * Applies schema.sql, which is written to be re-runnable: tables and
+   * indexes are created only if missing and migrations guard themselves.
+   * Running it on every start means a deploy never depends on someone
+   * remembering to run psql. The file sits next to this module in both the
+   * source tree and the build output.
+   */
+  async applySchema(): Promise<void> {
+    const sql = await readFile(join(__dirname, 'schema.sql'), 'utf8');
+    const client = await this.getClient();
+    try {
+      await client.query(sql);
+    } finally {
+      client.release();
+    }
+    logger.info('✅ Database schema is up to date');
   }
 
   // --- Forwarded Delegations for Backward Compatibility ---

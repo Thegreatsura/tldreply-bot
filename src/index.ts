@@ -39,6 +39,13 @@ async function main() {
   }
   logger.info('✅ Database connected');
 
+  try {
+    await db.applySchema();
+  } catch (error) {
+    logger.error('❌ Could not apply the database schema:', error);
+    process.exit(1);
+  }
+
   // Initialize encryption
   const encryption = new EncryptionService(ENCRYPTION_SECRET);
 

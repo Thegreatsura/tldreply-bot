@@ -91,6 +91,12 @@ export class AdminCommands extends BaseCommand {
         return;
       }
 
+      const existing = await this.db.getGroup(chat.id);
+      if (existing?.gemini_api_key_encrypted) {
+        await this.handleSetupOfConfiguredGroup(ctx, existing, userId);
+        return;
+      }
+
       await this.db.createGroup(chat.id, userId);
       await this.db.groups.updateGroupIdentity(
         chat.id,
@@ -114,6 +120,41 @@ export class AdminCommands extends BaseCommand {
       logger.error('Error in setup command:', error);
       await ctx.reply('❌ An error occurred during setup. Please try again.');
     }
+  }
+
+  /**
+   * /setup in a group that already has a key.
+   *
+   * The group is listed under whoever set it up. If that admin has since left
+   * or lost admin rights, the caller takes it over; otherwise they are pointed
+   * at the private-chat commands, which any current admin may use.
+   */
+  private async handleSetupOfConfiguredGroup(ctx: MyContext, group: any, userId: number) {
+    const chat = ctx.chat!;
+    const ownerId = group.setup_by_user_id ? Number(group.setup_by_user_id) : null;
+
+    const ownerStillAdmin =
+      ownerId !== null &&
+      (ownerId === userId || (await this.isAdminOrCreator(ctx, chat.id, ownerId)));
+
+    if (!ownerStillAdmin) {
+      await this.db.groups.claimGroup(chat.id, userId);
+      await ctx.reply(
+        '✅ This group is already configured, and it is now listed under your account ' +
+          'because the admin who set it up is no longer an admin here.\n\n' +
+          `Manage it in a private chat with me: <code>/update_api_key ${chat.id}</code>`,
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
+    await ctx.reply(
+      '✅ This group is already configured.\n\n' +
+        'Any admin can change its key in a private chat with me:\n' +
+        `<code>/update_api_key ${chat.id}</code>\n\n` +
+        'Settings live in /tldr_settings.',
+      { parse_mode: 'HTML' }
+    );
   }
 
   // --- TLDR Settings ---

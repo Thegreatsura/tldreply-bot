@@ -5,6 +5,7 @@ import { getGeminiService } from '../../services/geminiPool';
 import { logger } from '../../utils/logger';
 import { MyContext } from '../commands/BaseCommand';
 import { config } from '../../config';
+import { linkMessageReferences } from '../../utils/messageLinks';
 
 export class CleanupService {
   private bot: Bot<MyContext>;
@@ -172,12 +173,22 @@ export class CleanupService {
     }));
 
     const gemini = getGeminiService(chatId, group.gemini_api_key_encrypted, this.encryption);
-    const summaryText = await gemini.summarizeMessages(formattedMessages, {
+    const summary = await gemini.summarizeMessages(formattedMessages, {
       summaryStyle: settings.summary_style,
       customPrompt: settings.custom_prompt,
       chatId,
       chatUsername: group.username ?? undefined,
+      timezone: settings.schedule_timezone || 'UTC',
     });
+
+    // Links are resolved before storing: the messages are about to be deleted,
+    // so this is the last moment the citations can be checked against them.
+    const summaryText = linkMessageReferences(
+      summary,
+      chatId,
+      group.username,
+      new Set(validMessages.map(msg => Number(msg.message_id)))
+    );
 
     await this.db.insertSummary({
       chatId,
